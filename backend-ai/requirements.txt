@@ -14,12 +14,14 @@ python-jose[cryptography]>=3.3.0
 email-validator>=2.2.0
 pypdf>=5.1.0
 python-docx>=1.1.0
-numpy>=1.26.0
+numpy>=1.26.4,<2.7
+regex>=2025.10.22
 spacy>=3.7.0,<3.8
 sentence-transformers>=3.3.0
 rank-bm25>=0.2.2
 pandas>=2.0.0
 apscheduler>=3.10.0
-python-jobspy>=1.1.13
+markdownify>=0.13.1,<0.14.0
+tls-client>=1.0.1,<2.0.0
 tzdata>=2024.2
 

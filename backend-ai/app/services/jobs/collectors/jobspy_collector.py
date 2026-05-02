@@ -12,6 +12,7 @@ from app.services.jobs.collectors.indeed_html import collect_indeed_html
 from app.services.jobs.collectors.linkedin_guest import collect_linkedin_guest
 from app.services.jobs.collectors.naukri_html import collect_naukri_html
 from app.services.jobs.collectors.types import CollectedRow, PortalRunOutcome, normalize_portal_id
+from app.services.jobs.proxy_http import looks_like_proxy_failure
 
 try:
     from jobspy import scrape_jobs as _scrape_jobs
@@ -74,30 +75,6 @@ def _jobspy_scrape_kw(
     if pxy:
         kw["proxy"] = pxy
     return kw
-
-
-def _looks_like_proxy_failure(exc: Exception, proxy: str) -> bool:
-    msg = str(exc).lower()
-    proxy_l = proxy.lower()
-    proxy_host = proxy_l.split("://", 1)[-1]
-    proxy_markers = ("proxy", "127.0.0.1", "localhost")
-    failure_markers = (
-        "proxyerror",
-        "proxy error",
-        "cannot connect to proxy",
-        "failed to establish a new connection",
-        "max retries exceeded",
-        "connection refused",
-        "connection aborted",
-        "connect timeout",
-        "timed out",
-        "name or service not known",
-        "nodename nor servname provided",
-    )
-    mentions_proxy = any(marker in msg for marker in proxy_markers) or any(
-        marker in proxy_host for marker in proxy_markers
-    )
-    return mentions_proxy and any(marker in msg for marker in failure_markers)
 
 
 def _collector_note_for_failures(
@@ -248,6 +225,30 @@ def _merge_linkedin_guest(
     return merged, outcomes, note
 
 
+def _skip_redundant_indeed_html_note(note: str | None, html_note: str | None, added_rows: bool) -> bool:
+    """Avoid repeating Indeed HTML transport errors when JobSpy already reported Indeed 403/forbidden."""
+    if added_rows or not html_note or not note:
+        return False
+    n, h = note.lower(), html_note.lower()
+    if "indeed html" not in h:
+        return False
+    if "indeed" not in n:
+        return False
+    if "403" not in n and "forbidden" not in n:
+        return False
+    failure_like = (
+        "httpstatus" in h
+        or "httperror" in h
+        or "timeout" in h
+        or "connect" in h
+        or "proxy" in h
+        or "403" in h
+        or "429" in h
+        or "forbidden" in h
+    )
+    return failure_like
+
+
 def _merge_indeed_html(
     rows: list[CollectedRow],
     outcomes: dict[str, PortalRunOutcome],
@@ -282,7 +283,7 @@ def _merge_indeed_html(
     if added:
         outcomes["indeed"] = PortalRunOutcome(row_count=total_indeed, state="ok")
 
-    if html_note:
+    if html_note and not _skip_redundant_indeed_html_note(note, html_note, bool(added)):
         parts = [str(x).strip() for x in (note, html_note) if x and str(x).strip()]
         note = " ".join(parts)[:900] if parts else html_note
 
@@ -359,7 +360,8 @@ def collect_jobspy(
             outcomes[p] = PortalRunOutcome(row_count=0, state="unavailable")
         inst_note = (
             "Job search needs Python 3.10+ with python-jobspy installed. "
-            "Use your conda env (e.g. job-resume-backend) or recreate backend-ai/.venv with Python 3.11+, then pip install -r requirements.txt."
+            "Use your conda env (e.g. job-resume-backend) or recreate backend-ai/.venv with Python 3.11+, "
+            "then pip install -r requirements.txt && pip install --no-deps -r requirements-jobspy.txt."
         )
         logger.warning("jobspy: package not importable (Python version or missing install)")
         return _finalize_collect([], outcomes, profile, inst_note, portals)
@@ -440,7 +442,7 @@ def collect_jobspy(
             df_site = _scrape_jobs(site_name=[site], **scrape_kw)
         except Exception as exc:
             proxy = str(scrape_kw.get("proxy") or "").strip()
-            if proxy and _looks_like_proxy_failure(exc, proxy):
+            if proxy and looks_like_proxy_failure(exc, proxy):
                 retry_kw = dict(scrape_kw)
                 retry_kw.pop("proxy", None)
                 logger.warning(

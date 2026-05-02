@@ -56,6 +56,7 @@ ensure_conda_backend
 cd "$ROOT/backend-ai"
 echo "    Installing Python dependencies (pip -q)…" >&2
 pip install -qr requirements.txt
+pip install -q --no-deps -r requirements-jobspy.txt
 if ! python -c "import jobspy" 2>/dev/null; then
   echo "ERROR: python-jobspy failed to import after pip install." >&2
   exit 1

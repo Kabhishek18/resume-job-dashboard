@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 from app.core.config import settings
 from app.services.jobs.collectors.naukri_html import stable_key_from_url
 from app.services.jobs.collectors.types import CollectedRow
+from app.services.jobs.proxy_http import looks_like_proxy_failure
 
 _log = logging.getLogger(__name__)
 
@@ -66,6 +67,50 @@ def _indeed_headers() -> dict[str, str]:
     }
 
 
+def _http_get_html(url: str, proxy: str | None) -> tuple[str | None, Exception | None]:
+    kwargs: dict[str, Any] = {
+        "headers": _indeed_headers(),
+        "follow_redirects": True,
+        "timeout": 25.0,
+    }
+    if proxy:
+        kwargs["proxy"] = proxy
+    try:
+        with httpx.Client(**kwargs) as client:
+            r = client.get(url)
+            r.raise_for_status()
+            return r.text, None
+    except Exception as ex:
+        return None, ex
+
+
+def _fetch_indeed_jobs_html(url: str) -> tuple[str | None, str | None]:
+    """Return (html, error_note). Uses JOBSPY_PROXY when set; retries without proxy on proxy transport failures."""
+    pxy = (settings.jobspy_proxy or "").strip()
+    if pxy:
+        html, ex = _http_get_html(url, pxy)
+        if html is not None:
+            return html, None
+        if ex is not None and looks_like_proxy_failure(ex, pxy):
+            _log.warning("Indeed HTML via proxy failed (%s); retrying without proxy", ex)
+            html2, ex2 = _http_get_html(url, None)
+            if html2 is not None:
+                return html2, None
+            ex = ex2 or ex
+        if ex is not None:
+            _log.warning("Indeed HTML fetch failed: %s", ex)
+            return None, f"Indeed HTML: {type(ex).__name__}"
+        return None, "Indeed HTML: unknown error"
+
+    html, ex = _http_get_html(url, None)
+    if html is not None:
+        return html, None
+    if ex is not None:
+        _log.warning("Indeed HTML fetch failed: %s", ex)
+        return None, f"Indeed HTML: {type(ex).__name__}"
+    return None, "Indeed HTML: unknown error"
+
+
 def collect_indeed_html(profile: dict[str, Any]) -> tuple[list[CollectedRow], str | None]:
     """Fetch Indeed search HTML and parse listing cards into CollectedRow (portal=indeed)."""
     if not settings.indeed_html_fallback_enabled:
@@ -81,14 +126,9 @@ def collect_indeed_html(profile: dict[str, Any]) -> tuple[list[CollectedRow], st
     url = f"{base}/jobs?{urlencode(params)}"
 
     rows: list[CollectedRow] = []
-    try:
-        with httpx.Client(headers=_indeed_headers(), follow_redirects=True, timeout=25.0) as client:
-            r = client.get(url)
-            r.raise_for_status()
-            html = r.text
-    except Exception as ex:
-        _log.warning("Indeed HTML fetch failed: %s", ex)
-        return [], f"Indeed HTML: {type(ex).__name__}"
+    html, fetch_note = _fetch_indeed_jobs_html(url)
+    if fetch_note:
+        return [], fetch_note
 
     if not html or len(html) < 200:
         return [], "Indeed HTML: empty response"
