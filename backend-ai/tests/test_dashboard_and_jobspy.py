@@ -231,9 +231,13 @@ def test_jobspy_collector_maps_dataframe(mock_scrape, _mock_indeed_html, enable_
     assert outcomes["indeed"].row_count == 0
 
 
+@patch(
+    "app.services.jobs.collectors.jobspy_collector._jobspy_supported_site_values",
+    return_value=frozenset({"linkedin", "indeed"}),
+)
 @patch("app.services.jobs.collectors.jobspy_collector.collect_naukri_html")
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
-def test_jobspy_collector_no_scrape_when_only_unsupported_portals(mock_scrape, mock_naukri):
+def test_jobspy_collector_no_scrape_when_only_unsupported_portals(mock_scrape, mock_naukri, _mock_supported_sites):
     from app.services.jobs.collectors.jobspy_collector import collect_jobspy
 
     mock_naukri.return_value = ([], None)
@@ -249,8 +253,12 @@ def test_jobspy_collector_no_scrape_when_only_unsupported_portals(mock_scrape, m
     assert outcomes["naukri"].state == "no_results"
 
 
+@patch(
+    "app.services.jobs.collectors.jobspy_collector._jobspy_supported_site_values",
+    return_value=frozenset({"linkedin"}),
+)
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
-def test_jobspy_collector_passes_only_supported_sites_to_scrape(mock_scrape):
+def test_jobspy_collector_passes_only_supported_sites_to_scrape(mock_scrape, _mock_supported_sites):
     from app.services.jobs.collectors.jobspy_collector import collect_jobspy
 
     mock_scrape.return_value = pd.DataFrame(

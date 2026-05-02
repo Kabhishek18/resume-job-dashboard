@@ -1,19 +1,15 @@
 # Deploy the Next.js static export to the `gh-pages` branch (classic GitHub Pages).
-# This avoids actions/deploy-pages, which returns 404 if the "Actions" Pages backend
-# is not available for your repo (common on free private repos or misconfigured sites).
 #
-# One-time setup:
-#   1) Repo → Settings → Pages → Build and deployment → Source: **Deploy from a branch**
-#   2) Branch: **gh-pages** · Folder: **/ (root)** → Save
-#   3) Run this workflow (or push to main). The `gh-pages` branch is created automatically.
+# API URL (required — otherwise the SPA calls localhost and sign-in fails on github.io):
+#   • Repo → Settings → Secrets and variables → Actions → Variables →
+#     Name: PUBLIC_API_BASE_URL   Value: https://your-api.example.com  (no trailing slash, must be HTTPS if Pages is HTTPS)
+#   • Or: Actions → Deploy (GitHub Pages) → Run workflow → fill "Public API base URL".
 #
-# Free GitHub: Pages for a **private** repository is not available — use a **public** repo,
-# upgrade the plan, or host the frontend on Vercel/Netlify instead.
+# One-time Pages setup:
+#   1) Settings → Pages → Source: Deploy from a branch → Branch: gh-pages / (root)
+#   2) Push main or run this workflow. Free plan: repo must be public for Pages.
 #
-# Site URL: Settings → Pages (e.g. https://<user>.github.io/<repo>/)
-#
-# Optional: Actions → Variables → PUBLIC_API_BASE_URL (FastAPI, no trailing slash).
-#           PAGES_BASE_PATH to override Next basePath if needed.
+# Optional: PAGES_BASE_PATH to override Next basePath.
 
 name: Deploy (GitHub Pages)
 
@@ -21,6 +17,12 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      public_api_base_url:
+        description: "API origin for this build only (https://host, no trailing slash). Overrides empty variable."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -50,23 +52,41 @@ jobs:
             *) echo "base_path=/$R" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      - name: Resolve PUBLIC_API_BASE_URL for build
+        id: api
+        env:
+          MANUAL: ${{ inputs.public_api_base_url }}
+          VAR: ${{ vars.PUBLIC_API_BASE_URL }}
+        run: |
+          pick=""
+          if [ -n "$MANUAL" ]; then pick="$MANUAL"
+          elif [ -n "$VAR" ]; then pick="$VAR"
+          fi
+          pick="${pick%/}"
+          if [ -z "$pick" ]; then
+            echo "base=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "base=$pick" >> "$GITHUB_OUTPUT"
+
+      - name: Require live API URL (Pages cannot call localhost)
+        if: ${{ steps.api.outputs.base == '' }}
+        run: |
+          echo "::error::Set repository variable PUBLIC_API_BASE_URL (Settings → Secrets and variables → Actions → Variables), or re-run this workflow via 'Run workflow' and enter public_api_base_url. Use your public FastAPI HTTPS origin, e.g. https://xxx.onrender.com — no trailing slash."
+          exit 1
+
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Reminder — API base URL
-        if: ${{ vars.PUBLIC_API_BASE_URL == '' }}
-        run: |
-          echo "::warning::Set Actions variable PUBLIC_API_BASE_URL to your FastAPI origin (no trailing slash), or the SPA will fall back to http://localhost:8000."
-
       - name: Install and build (static export)
         working-directory: frontend
         env:
           STATIC_EXPORT: "true"
           NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
-          NEXT_PUBLIC_API_BASE: ${{ vars.PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_API_BASE: ${{ steps.api.outputs.base }}
         run: |
           npm ci
           npm run build
