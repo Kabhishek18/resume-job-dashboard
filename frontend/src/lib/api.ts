@@ -36,7 +36,7 @@ function networkApiError(): ApiError {
   const local = base.includes("localhost") || base.includes("127.0.0.1")
   const hint = local
     ? "Redeploy the frontend after setting GitHub Actions variable PUBLIC_API_BASE_URL to your live API (HTTPS)."
-    : "Check the API is reachable, uses HTTPS when this site uses HTTPS, and CORS_ORIGINS on the server includes https://<user>.github.io (no path)."
+    : "Most often the API base URL is wrong or there is no running web service on that host (requests fail before CORS). In Render, open the service and copy its exact URL. Use HTTPS when this site uses HTTPS. GitHub Pages https://<user>.github.io is allowed by current API CORS settings; add it to CORS_ORIGINS only if you run an older backend."
   return new ApiError("NETWORK_ERROR", `Could not reach the API (${base}). ${hint}`)
 }
 
