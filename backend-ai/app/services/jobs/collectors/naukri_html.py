@@ -69,6 +69,111 @@ def _href_looks_like_naukri_job(href: str) -> bool:
     )
 
 
+# Class / attr hints for company on Naukri SERP cards (best-effort; markup changes often).
+_COMPANY_CLASS_HINTS = (
+    "comp-name",
+    "company-name",
+    "companyName",
+    "subTitle",
+    "subtitle",
+    "org-name",
+    "naukri-organ",
+    "ni-company",
+)
+
+
+def _text_looks_like_company(text: str, title: str) -> bool:
+    s = (text or "").strip()
+    if len(s) < 2 or len(s) > 120 or "http" in s.lower():
+        return False
+    if s.casefold() == (title or "").strip().casefold():
+        return False
+    if len(s) > 72 and (s.count(" ") > 10 or s.count(".") > 1):
+        return False
+    return True
+
+
+def _company_from_snippet_fallback(snippet: str, title: str) -> str:
+    if not snippet or "http" in snippet.lower():
+        return ""
+    first_line = snippet.split("\n")[0].strip()
+    for sep in ("·", "|"):
+        if sep not in first_line:
+            continue
+        parts = [p.strip() for p in first_line.split(sep) if p.strip()]
+        if not parts:
+            continue
+        cand = parts[0]
+        if not _text_looks_like_company(cand, title):
+            continue
+        if re.search(r"\d+\s*-\s*\d+\s*yr", cand, re.I):
+            continue
+        if re.match(r"^\d", cand):
+            continue
+        return cand[:300]
+    return ""
+
+
+def _company_from_context(anchor: Any, title: str, snippet: str) -> str:
+    """Walk up from job link; read data-* / typical class nodes. Selectors are best-effort."""
+    el: Any = anchor
+    for _ in range(10):
+        if el is None or not getattr(el, "name", None):
+            break
+        for attr in ("data-company", "data-comp", "data-orgname", "data-org"):
+            raw = el.get(attr) if hasattr(el, "get") else None
+            if raw and _text_looks_like_company(str(raw), title):
+                return str(raw).strip()[:300]
+        klass = el.get("class") if hasattr(el, "get") else None
+        if klass:
+            cl = " ".join(klass).lower()
+            if any(h.lower() in cl for h in _COMPANY_CLASS_HINTS):
+                tx = el.get_text(separator=" ", strip=True)
+                if tx and _text_looks_like_company(tx, title) and tx.casefold() != title.casefold():
+                    first = tx.split("\n")[0].strip()[:120]
+                    if _text_looks_like_company(first, title):
+                        return first[:300]
+        if hasattr(el, "find_all"):
+            pat = re.compile("|".join(re.escape(h) for h in _COMPANY_CLASS_HINTS), re.I)
+            for node in el.find_all(class_=pat):
+                tx = node.get_text(separator=" ", strip=True)
+                if tx and _text_looks_like_company(tx, title):
+                    seg = tx.split("\n")[0].strip()[:120]
+                    if _text_looks_like_company(seg, title):
+                        return seg[:300]
+        el = getattr(el, "parent", None)
+
+    return _company_from_snippet_fallback(snippet, title)
+
+
+def _split_title_company(title: str) -> tuple[str, str]:
+    """If link text looks like 'Role at Company' / 'Role | Company', split into (title, company)."""
+    t = (title or "").strip()
+    if len(t) < 5 or t == "Job posting":
+        return t[:300] if t else "", ""
+    low = t.casefold()
+    for sep in (" at ", " @ ", " | "):
+        pos = low.find(sep)
+        if pos == -1:
+            continue
+        left, right = t[:pos].strip(), t[pos + len(sep) :].strip()
+        if len(left) >= 2 and 2 <= len(right) <= 120 and "http" not in right.lower():
+            return left[:300], right[:300]
+    if " - " in t:
+        left, right = t.split(" - ", 1)
+        left, right = left.strip(), right.strip()
+        if (
+            len(left) >= 2
+            and 2 <= len(right) <= 80
+            and "http" not in right.lower()
+            and "\n" not in right
+            and len(right.split()) <= 8
+            and not re.match(r"^\d", right)
+        ):
+            return left[:300], right[:300]
+    return t[:300], ""
+
+
 def _extract_job_links_from_markdown(md: str) -> list[tuple[str, str]]:
     if not md or len(md) < 50:
         return []
@@ -114,6 +219,43 @@ class _NaukriListing:
     title: str
     url: str
     description: str
+    company: str = ""
+
+
+def parse_naukri_serp_html(html: str, *, max_listings: int | None = None) -> list[_NaukriListing]:
+    """Parse one Naukri search-results HTML page into listings (for tests and direct reuse)."""
+    cap = max_listings if max_listings is not None else _max_listings()
+    soup = BeautifulSoup(html, "html.parser")
+    found: list[_NaukriListing] = []
+    for a in soup.find_all("a", href=True):
+        href = (a.get("href") or "").strip()
+        if not _href_looks_like_naukri_job(href):
+            continue
+        full = _absolutize(NAUKRI_BASE, href)
+        raw = (a.get_text() or "").strip()
+        if len(raw) < 3:
+            raw = "Job posting"
+        snippet = ""
+        parent = a.find_parent(["article", "div", "li"])
+        if parent:
+            snippet = parent.get_text(separator=" ", strip=True)[:1200]
+        company = (_company_from_context(a, raw, snippet) or "").strip()[:300]
+        tit, comp_link = _split_title_company(raw)
+        if comp_link and not company:
+            company = comp_link[:300]
+        display_title = tit[:300] if comp_link else raw[:300]
+        desc = f"{display_title}\n{snippet}"[:2000]
+        found.append(
+            _NaukriListing(
+                title=display_title,
+                url=full.split("?")[0],
+                description=desc,
+                company=company[:300],
+            )
+        )
+        if len(found) >= cap:
+            break
+    return found
 
 
 async def _fetch_html(client: httpx.AsyncClient, url: str, timeout: float = 25.0) -> str | None:
@@ -135,30 +277,12 @@ async def _search_naukri_async(profile: dict[str, Any]) -> list[_NaukriListing]:
 
     def append_from_html(html: str) -> None:
         nonlocal out, seen
-        soup = BeautifulSoup(html, "html.parser")
-        for a in soup.find_all("a", href=True):
-            href = (a.get("href") or "").strip()
-            if not _href_looks_like_naukri_job(href):
-                continue
-            full = _absolutize(NAUKRI_BASE, href)
-            key = stable_key_from_url(full)
+        for li in parse_naukri_serp_html(html):
+            key = stable_key_from_url(li.url)
             if key in seen:
                 continue
-            title = (a.get_text() or "").strip()
-            if len(title) < 3:
-                title = "Job posting"
             seen.add(key)
-            snippet = ""
-            parent = a.find_parent(["article", "div", "li"])
-            if parent:
-                snippet = parent.get_text(separator=" ", strip=True)[:1200]
-            out.append(
-                _NaukriListing(
-                    title=title[:300],
-                    url=full.split("?")[0],
-                    description=f"{title}\n{snippet}"[:2000],
-                )
-            )
+            out.append(li)
             if len(out) >= _max_listings():
                 return
 
@@ -194,8 +318,20 @@ async def _search_naukri_async(profile: dict[str, Any]) -> list[_NaukriListing]:
             if key in seen:
                 continue
             seen.add(key)
-            t = title if len(title) >= 3 else "Job posting"
-            out.append(_NaukriListing(title=t[:300], url=full.split("?")[0], description=t[:1200]))
+            raw = title if len(title) >= 3 else "Job posting"
+            tit, comp_link = _split_title_company(raw)
+            display_title = tit[:300] if comp_link else raw[:300]
+            company = (comp_link or "")[:300]
+            if len(display_title) < 3:
+                display_title = "Job posting"
+            out.append(
+                _NaukriListing(
+                    title=display_title,
+                    url=full.split("?")[0],
+                    description=display_title[:1200],
+                    company=company,
+                )
+            )
             if len(out) >= _max_listings():
                 return out
     return out
@@ -234,7 +370,7 @@ def collect_naukri_html(profile: dict[str, Any]) -> tuple[list[CollectedRow], st
         rows.append(
             CollectedRow(
                 title=li.title,
-                company="",
+                company=(li.company or "").strip()[:300],
                 location=loc_line[:300],
                 portal="naukri",
                 apply_url=li.url[:2000],

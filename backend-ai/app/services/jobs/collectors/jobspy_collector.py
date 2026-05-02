@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from app.core.config import settings
+from app.services.jobs.collectors.linkedin_guest import collect_linkedin_guest
 from app.services.jobs.collectors.naukri_html import collect_naukri_html
 from app.services.jobs.collectors.types import CollectedRow, PortalRunOutcome, normalize_portal_id
 
@@ -177,6 +178,65 @@ def _row_to_collected(row: pd.Series) -> CollectedRow:
     )
 
 
+def _merge_linkedin_guest(
+    rows: list[CollectedRow],
+    outcomes: dict[str, PortalRunOutcome],
+    profile: dict[str, Any],
+    note: str | None,
+    portals: list[str],
+) -> tuple[list[CollectedRow], dict[str, PortalRunOutcome], str | None]:
+    """When JobSpy has no usable LinkedIn rows, try lightweight guest /jobs/search HTML parse."""
+    if "linkedin" not in portals or not settings.linkedin_guest_enabled:
+        return rows, outcomes, note
+
+    li_rows = [r for r in rows if normalize_portal_id(getattr(r, "portal", "") or "") == "linkedin"]
+    li_count = len(li_rows)
+    st = outcomes.get("linkedin")
+    should_try = (
+        settings.linkedin_use_guest_instead_of_jobspy
+        or li_count == 0
+        or (st is not None and st.state == "unavailable")
+    )
+    if st is not None and st.state == "no_results" and li_count == 0:
+        should_try = True
+    if not should_try:
+        return rows, outcomes, note
+
+    res = collect_linkedin_guest(profile)
+    existing_urls = {r.apply_url for r in li_rows if r.apply_url}
+    new_li: list[CollectedRow] = []
+    for r in res.rows:
+        if r.apply_url and r.apply_url in existing_urls:
+            continue
+        new_li.append(r)
+        if r.apply_url:
+            existing_urls.add(r.apply_url)
+
+    merged = rows + new_li
+    total_li = sum(1 for r in merged if normalize_portal_id(getattr(r, "portal", "") or "") == "linkedin")
+
+    if total_li > 0:
+        outcomes["linkedin"] = PortalRunOutcome(row_count=total_li, state="ok")
+    elif res.warnings:
+        hint = "; ".join(res.warnings)[:220]
+        extra = f"LinkedIn guest: {hint}"
+        parts = [str(x).strip() for x in (note, extra) if x and str(x).strip()]
+        note = " ".join(parts)[:900] if parts else extra
+
+    return merged, outcomes, note
+
+
+def _finalize_collect(
+    rows: list[CollectedRow],
+    outcomes: dict[str, PortalRunOutcome],
+    profile: dict[str, Any],
+    note: str | None,
+    portals: list[str],
+) -> tuple[list[CollectedRow], dict[str, PortalRunOutcome], str | None]:
+    rows, outcomes, note = _merge_linkedin_guest(rows, outcomes, profile, note, portals)
+    return _merge_naukri_html(rows, outcomes, profile, note, portals)
+
+
 def _merge_naukri_html(
     rows: list[CollectedRow],
     outcomes: dict[str, PortalRunOutcome],
@@ -221,6 +281,12 @@ def collect_jobspy(
 
     outcomes: dict[str, PortalRunOutcome] = {p: PortalRunOutcome(row_count=0, state="no_results") for p in portals}
     naukri_wanted = "naukri" in portals and settings.naukri_html_enabled
+    linkedin_guest_jobspy_skipped = (
+        "linkedin" in portals
+        and settings.linkedin_guest_enabled
+        and settings.linkedin_use_guest_instead_of_jobspy
+    )
+    non_jobspy_collect = naukri_wanted or linkedin_guest_jobspy_skipped
 
     if _scrape_jobs is None:
         for p in portals:
@@ -232,10 +298,16 @@ def collect_jobspy(
             "Use your conda env (e.g. job-resume-backend) or recreate backend-ai/.venv with Python 3.11+, then pip install -r requirements.txt."
         )
         logger.warning("jobspy: package not importable (Python version or missing install)")
-        return _merge_naukri_html([], outcomes, profile, inst_note, portals)
+        return _finalize_collect([], outcomes, profile, inst_note, portals)
 
     supported = _jobspy_supported_site_values()
-    sites_arg = [p for p in portals if p in supported and p != "naukri"]
+    sites_arg = [
+        p
+        for p in portals
+        if p in supported
+        and p != "naukri"
+        and not (p == "linkedin" and linkedin_guest_jobspy_skipped)
+    ]
 
     for p in portals:
         if p == "naukri":
@@ -245,7 +317,7 @@ def collect_jobspy(
         if p not in supported:
             outcomes[p] = PortalRunOutcome(row_count=0, state="unavailable")
 
-    if not sites_arg and not naukri_wanted:
+    if not sites_arg and not non_jobspy_collect:
         joined = ", ".join(sorted(supported)) if supported else "(none)"
         note = (
             f"No selected portals are supported by this JobSpy install ({joined}). "
@@ -263,7 +335,7 @@ def collect_jobspy(
             "(many networks get HTTP 403 from Indeed)."
         )
 
-    if not sites_arg and not naukri_wanted:
+    if not sites_arg and not non_jobspy_collect:
         extra = (
             "No boards left to scrape for this profile. "
             "Include LinkedIn, or set JOBSPY_RUN_INDEED=true to try Indeed."
@@ -343,7 +415,7 @@ def collect_jobspy(
                 outcomes[p] = PortalRunOutcome(row_count=0, state="unavailable")
             else:
                 outcomes[p] = PortalRunOutcome(row_count=0, state="no_results")
-        return _merge_naukri_html([], outcomes, profile, note, portals)
+        return _finalize_collect([], outcomes, profile, note, portals)
 
     rows: list[CollectedRow] = []
     for _, series in df.iterrows():
@@ -365,4 +437,4 @@ def collect_jobspy(
             n = int(counts.get(p, 0))
             outcomes[p] = PortalRunOutcome(row_count=n, state="ok" if n > 0 else "no_results")
 
-    return _merge_naukri_html(rows, outcomes, profile, note, portals)
+    return _finalize_collect(rows, outcomes, profile, note, portals)

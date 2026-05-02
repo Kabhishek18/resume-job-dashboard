@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # Indeed is opt-in: many networks get HTTP 403. Set JOBSPY_RUN_INDEED=true in .env to scrape Indeed.
     jobspy_run_indeed: bool = False
 
+    # LinkedIn guest fetch (httpx + HTML cards): no JobSpy, ignores JOBSPY_PROXY.
+    linkedin_guest_enabled: bool = True
+    # If true, skip JobSpy for LinkedIn and use only the guest path (useful when proxy/JobSpy breaks LI).
+    linkedin_use_guest_instead_of_jobspy: bool = False
+
     # Firecrawl (optional): Naukri search pages are often JS-heavy; used when direct HTML has no listing links.
     firecrawl_api_key: str = Field(
         default="",
