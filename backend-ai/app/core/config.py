@@ -1,13 +1,17 @@
 from typing import Literal, List
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    cors_origins: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    cors_origins_csv: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000",
+        validation_alias=AliasChoices("CORS_ORIGINS"),
+        description="Comma-separated browser Origin values (scheme+host+port only, no path) for CORS.",
+    )
     api_key_placeholder: str = ""
     debug: bool = False
     log_level: str = "INFO"
@@ -31,6 +35,11 @@ class Settings(BaseSettings):
     jobspy_run_indeed: bool = False
     # ZipRecruiter is opt-in for the same reason as Indeed.
     jobspy_run_zip_recruiter: bool = False
+
+    # Indeed: direct HTML SERP (optional fallback when JobSpy Indeed fails); only if user opted into Indeed.
+    indeed_html_fallback_enabled: bool = True
+    indeed_html_max_listings: int = 18
+    indeed_html_from_age_days: int = 14
 
     # LinkedIn guest fetch (httpx + HTML cards): no JobSpy, ignores JOBSPY_PROXY.
     linkedin_guest_enabled: bool = True
@@ -58,6 +67,29 @@ class Settings(BaseSettings):
         except (TypeError, ValueError):
             n = 18
         return max(1, min(100, n))
+
+    @field_validator("indeed_html_max_listings", mode="before")
+    @classmethod
+    def _clamp_indeed_html_max(cls, v: object) -> int:
+        try:
+            n = int(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            n = 18
+        return max(1, min(50, n))
+
+    @field_validator("indeed_html_from_age_days", mode="before")
+    @classmethod
+    def _clamp_indeed_fromage(cls, v: object) -> int:
+        try:
+            n = int(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            n = 14
+        return max(1, min(30, n))
+
+    @computed_field
+    @property
+    def cors_origins(self) -> List[str]:
+        return [x.strip() for x in self.cors_origins_csv.split(",") if x.strip()]
 
 
 settings = Settings()

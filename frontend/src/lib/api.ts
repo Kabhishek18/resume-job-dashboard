@@ -25,6 +25,21 @@ function apiBase(): string {
   return base.replace(/\/$/, "")
 }
 
+function isLikelyNetworkFailure(e: unknown): boolean {
+  if (e instanceof TypeError) return true
+  if (e instanceof Error && e.message === "Failed to fetch") return true
+  return false
+}
+
+function networkApiError(): ApiError {
+  const base = apiBase()
+  const local = base.includes("localhost") || base.includes("127.0.0.1")
+  const hint = local
+    ? "Redeploy the frontend after setting GitHub Actions variable PUBLIC_API_BASE_URL to your live API (HTTPS)."
+    : "Check the API is reachable, uses HTTPS when this site uses HTTPS, and CORS_ORIGINS on the server includes https://<user>.github.io (no path)."
+  return new ApiError("NETWORK_ERROR", `Could not reach the API (${base}). ${hint}`)
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null
 }
@@ -94,6 +109,7 @@ export async function apiFetch<T>(
     if (e instanceof DOMException && e.name === "AbortError") {
       throw new ApiError("TIMEOUT", `Request timed out after ${timeoutMs}ms`)
     }
+    if (isLikelyNetworkFailure(e)) throw networkApiError()
     throw e
   } finally {
     clearTimeout(tid)
@@ -153,6 +169,7 @@ export async function apiFetchRaw(
     if (e instanceof DOMException && e.name === "AbortError") {
       throw new ApiError("TIMEOUT", `Request timed out after ${timeoutMs}ms`)
     }
+    if (isLikelyNetworkFailure(e)) throw networkApiError()
     throw e
   } finally {
     clearTimeout(tid)

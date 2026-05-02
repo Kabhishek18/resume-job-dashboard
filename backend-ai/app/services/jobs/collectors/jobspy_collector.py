@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from app.core.config import settings
+from app.services.jobs.collectors.indeed_html import collect_indeed_html
 from app.services.jobs.collectors.linkedin_guest import collect_linkedin_guest
 from app.services.jobs.collectors.naukri_html import collect_naukri_html
 from app.services.jobs.collectors.types import CollectedRow, PortalRunOutcome, normalize_portal_id
@@ -19,7 +20,20 @@ except ImportError:  # pragma: no cover - dev env without JobSpy / Python < 3.10
 
 logger = logging.getLogger(__name__)
 
-PORTAL_KEYS = frozenset({"linkedin", "indeed", "glassdoor", "naukri", "zip_recruiter"})
+PORTAL_KEYS = frozenset(
+    {"linkedin", "indeed", "glassdoor", "naukri", "zip_recruiter", "google", "bayt", "bdjobs"}
+)
+
+# Deterministic per-site scrape order (unknown sites sort last by tuple key).
+_SITE_SCRAPE_ORDER: dict[str, int] = {
+    "linkedin": 0,
+    "indeed": 1,
+    "glassdoor": 2,
+    "zip_recruiter": 3,
+    "google": 4,
+    "bayt": 5,
+    "bdjobs": 6,
+}
 
 # JobSpy returns little or nothing if search_term is missing; keep a harmless default.
 _DEFAULT_SEARCH_TERM = "software engineer"
@@ -41,7 +55,7 @@ def _jobspy_supported_site_values() -> frozenset[str]:
 
         return frozenset(s.value for s in Site)
     except Exception:  # pragma: no cover
-        return frozenset({"linkedin", "indeed", "zip_recruiter"})
+        return frozenset({"linkedin", "indeed", "zip_recruiter", "glassdoor", "google", "bayt", "bdjobs"})
 
 
 def _jobspy_scrape_kw(
@@ -234,6 +248,47 @@ def _merge_linkedin_guest(
     return merged, outcomes, note
 
 
+def _merge_indeed_html(
+    rows: list[CollectedRow],
+    outcomes: dict[str, PortalRunOutcome],
+    profile: dict[str, Any],
+    note: str | None,
+    portals: list[str],
+) -> tuple[list[CollectedRow], dict[str, PortalRunOutcome], str | None]:
+    """Append Indeed rows from HTML SERP when JobSpy Indeed is opted in (second chance after JobSpy)."""
+    if "indeed" not in portals:
+        return rows, outcomes, note
+    if not settings.indeed_html_fallback_enabled or not settings.jobspy_run_indeed:
+        return rows, outcomes, note
+
+    html_rows, html_note = collect_indeed_html(profile)
+    existing_urls = {
+        r.apply_url
+        for r in rows
+        if r.apply_url and normalize_portal_id(getattr(r, "portal", "") or "") == "indeed"
+    }
+    added: list[CollectedRow] = []
+    for r in html_rows:
+        if r.apply_url and r.apply_url in existing_urls:
+            continue
+        added.append(r)
+        if r.apply_url:
+            existing_urls.add(r.apply_url)
+
+    merged = rows + added
+    total_indeed = sum(
+        1 for r in merged if normalize_portal_id(getattr(r, "portal", "") or "") == "indeed"
+    )
+    if added:
+        outcomes["indeed"] = PortalRunOutcome(row_count=total_indeed, state="ok")
+
+    if html_note:
+        parts = [str(x).strip() for x in (note, html_note) if x and str(x).strip()]
+        note = " ".join(parts)[:900] if parts else html_note
+
+    return merged, outcomes, note
+
+
 def _finalize_collect(
     rows: list[CollectedRow],
     outcomes: dict[str, PortalRunOutcome],
@@ -242,6 +297,7 @@ def _finalize_collect(
     portals: list[str],
 ) -> tuple[list[CollectedRow], dict[str, PortalRunOutcome], str | None]:
     rows, outcomes, note = _merge_linkedin_guest(rows, outcomes, profile, note, portals)
+    rows, outcomes, note = _merge_indeed_html(rows, outcomes, profile, note, portals)
     return _merge_naukri_html(rows, outcomes, profile, note, portals)
 
 
@@ -329,7 +385,8 @@ def collect_jobspy(
         joined = ", ".join(sorted(supported)) if supported else "(none)"
         note = (
             f"No selected portals are supported by this JobSpy install ({joined}). "
-            "Pick LinkedIn, ZipRecruiter, and/or Indeed, or upgrade: pip install -U python-jobspy"
+            "Pick LinkedIn, Google jobs, Bayt, BDJobs, ZipRecruiter, and/or Indeed (JobSpy build-dependent), "
+            "or upgrade: pip install -U python-jobspy"
         )
         logger.warning("jobspy: no overlap between selected portals and supported sites %s", supported)
         return [], outcomes, note
@@ -365,8 +422,7 @@ def collect_jobspy(
         return [], outcomes, note
 
     # Prefer LinkedIn first when multiple sites run (often more reliable than Indeed).
-    _site_order = {"linkedin": 0, "indeed": 1, "zip_recruiter": 2}
-    sites_arg.sort(key=lambda s: (_site_order.get(s, 9), s))
+    sites_arg.sort(key=lambda s: (_SITE_SCRAPE_ORDER.get(s, 99), s))
 
     raw_kw = (profile.get("keywords") or "").strip()
     search = raw_kw or _DEFAULT_SEARCH_TERM

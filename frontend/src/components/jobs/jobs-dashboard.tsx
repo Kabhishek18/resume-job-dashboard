@@ -48,6 +48,9 @@ const PORTALS: { id: JobsPortalId; label: string }[] = [
   { id: "indeed", label: "Indeed" },
   { id: "zip_recruiter", label: "ZipRecruiter" },
   { id: "glassdoor", label: "Glassdoor" },
+  { id: "google", label: "Google jobs (JobSpy)" },
+  { id: "bayt", label: "Bayt" },
+  { id: "bdjobs", label: "BDJobs" },
   { id: "naukri", label: "Naukri" },
 ]
 
@@ -480,8 +483,9 @@ export function JobsDashboard() {
           <CardHeader className="space-y-1 border-b pb-4">
             <CardTitle className="text-lg">Job search</CardTitle>
             <CardDescription>
-              Run a saved search across LinkedIn, Indeed, ZipRecruiter, Glassdoor, and Naukri. Results are deduped by
-              apply link; export matches what you filter and sort below.
+              Run a saved search across LinkedIn, Indeed, ZipRecruiter, Glassdoor, Google jobs, Bayt, BDJobs, and Naukri
+              (JobSpy-supported sites depend on your installed python-jobspy). Results are deduped by apply link; export
+              matches what you filter and sort below.
             </CardDescription>
             {lastRun ? (
               <p className="text-foreground pt-2 text-sm font-medium leading-snug">{runSummary}</p>
@@ -582,6 +586,13 @@ export function JobsDashboard() {
                   <code className="text-foreground rounded bg-muted px-1">JOBSPY_RUN_ZIP_RECRUITER=true</code> is set in the backend{" "}
                   <code className="text-foreground rounded bg-muted px-1">.env</code> (many networks get 403;{" "}
                   <code className="text-foreground rounded bg-muted px-1">JOBSPY_PROXY</code> often helps).
+                </p>
+              ) : null}
+              {pickedPortals.includes("google") || pickedPortals.includes("bayt") || pickedPortals.includes("bdjobs") ? (
+                <p className="text-muted-foreground text-xs leading-snug">
+                  Google jobs, Bayt, and BDJobs are passed to python-jobspy only if your installed build supports them
+                  (upgrade with <code className="text-foreground rounded bg-muted px-1">pip install -U python-jobspy</code>
+                  ). Bayt/BDJobs are region-specific.
                 </p>
               ) : null}
             </div>

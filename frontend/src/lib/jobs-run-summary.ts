@@ -6,6 +6,9 @@ const PORTAL_DISPLAY: Record<string, string> = {
   glassdoor: "Glassdoor",
   naukri: "Naukri",
   zip_recruiter: "ZipRecruiter",
+  google: "Google jobs",
+  bayt: "Bayt",
+  bdjobs: "BDJobs",
 }
 
 /** Pretty name for portal keys in run summaries (e.g. zip_recruiter → ZipRecruiter). */

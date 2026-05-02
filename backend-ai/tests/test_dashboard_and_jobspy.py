@@ -139,8 +139,56 @@ def test_jobspy_zip_recruiter_not_scraped_by_default(mock_scrape, _supported, mo
     assert "JOBSPY_RUN_ZIP_RECRUITER" in (note or "")
 
 
+@patch("app.services.jobs.collectors.jobspy_collector.collect_naukri_html", return_value=([], None))
+@patch("app.services.jobs.collectors.jobspy_collector.collect_indeed_html")
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
-def test_jobspy_collector_maps_dataframe(mock_scrape, enable_jobspy_indeed):
+def test_indeed_html_merges_after_jobspy_indeed_fails(mock_scrape, mock_indeed_html, _mock_naukri, enable_jobspy_indeed, monkeypatch: pytest.MonkeyPatch):
+    from app.services.jobs.collectors.jobspy_collector import collect_jobspy
+
+    monkeypatch.setattr(settings, "indeed_html_fallback_enabled", True)
+    mock_scrape.side_effect = RuntimeError("bad response with status code: 403")
+    mock_indeed_html.return_value = (
+        [
+            CollectedRow(
+                title="HTML Job",
+                company="",
+                location="",
+                portal="indeed",
+                apply_url="https://in.indeed.com/viewjob?jk=xyz",
+                source_url="https://in.indeed.com/viewjob?jk=xyz",
+            )
+        ],
+        None,
+    )
+    rows, outcomes, note = collect_jobspy({"selected_portals": ["indeed"], "keywords": "k", "remote_only": False})
+
+    assert len(rows) == 1
+    assert rows[0].title == "HTML Job"
+    assert outcomes["indeed"].state == "ok"
+    assert outcomes["indeed"].row_count == 1
+    mock_indeed_html.assert_called_once()
+
+
+@patch("app.services.jobs.collectors.jobspy_collector._jobspy_supported_site_values", return_value=frozenset({"linkedin", "indeed", "google"}))
+@patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
+def test_jobspy_collector_google_passed_to_scrape(mock_scrape, _supported):
+    from app.services.jobs.collectors.jobspy_collector import collect_jobspy
+
+    mock_scrape.return_value = pd.DataFrame(
+        [{"site": "google", "title": "G", "company": "Co", "location": "", "job_url": "https://example.invalid/g1"}]
+    )
+    rows, outcomes, note = collect_jobspy({"selected_portals": ["google"], "keywords": "k", "remote_only": False})
+    mock_scrape.assert_called_once()
+    assert mock_scrape.call_args.kwargs["site_name"] == ["google"]
+    assert len(rows) == 1
+    assert rows[0].portal == "google"
+    assert outcomes["google"].state == "ok"
+    assert note is None
+
+
+@patch("app.services.jobs.collectors.jobspy_collector.collect_indeed_html", return_value=([], None))
+@patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
+def test_jobspy_collector_maps_dataframe(mock_scrape, _mock_indeed_html, enable_jobspy_indeed):
     from app.services.jobs.collectors.jobspy_collector import collect_jobspy
 
     mock_scrape.side_effect = [
@@ -219,8 +267,9 @@ def test_jobspy_collector_passes_only_supported_sites_to_scrape(mock_scrape):
     assert "verbose" not in k
 
 
+@patch("app.services.jobs.collectors.jobspy_collector.collect_indeed_html", return_value=([], None))
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
-def test_jobspy_collector_indeed_403_linkedin_still_returns_rows(mock_scrape, enable_jobspy_indeed):
+def test_jobspy_collector_indeed_403_linkedin_still_returns_rows(mock_scrape, _mock_indeed_html, enable_jobspy_indeed):
     from app.services.jobs.collectors.jobspy_collector import collect_jobspy
 
     li_df = pd.DataFrame(

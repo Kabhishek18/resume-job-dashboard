@@ -3,7 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-PortalId = Literal["linkedin", "naukri", "glassdoor", "indeed", "zip_recruiter", "other"]
+PortalId = Literal[
+    "linkedin",
+    "naukri",
+    "glassdoor",
+    "indeed",
+    "zip_recruiter",
+    "google",
+    "bayt",
+    "bdjobs",
+    "other",
+]
 PortalState = Literal["ok", "no_results", "unavailable"]
 
 
@@ -36,11 +46,23 @@ class PortalRunOutcome:
 
 CollectorFn = Callable[[dict[str, Any]], CollectorResult]
 
-PORTAL_IDS: tuple[PortalId, ...] = ("linkedin", "naukri", "glassdoor", "indeed", "zip_recruiter", "other")
+PORTAL_IDS: tuple[PortalId, ...] = (
+    "linkedin",
+    "naukri",
+    "glassdoor",
+    "indeed",
+    "zip_recruiter",
+    "google",
+    "bayt",
+    "bdjobs",
+    "other",
+)
 
 _ALIAS_TO_CANONICAL: dict[str, PortalId] = {
     "ziprecruiter": "zip_recruiter",
     "zip recruiter": "zip_recruiter",
+    "bd_jobs": "bdjobs",
+    "bd-jobs": "bdjobs",
 }
 
 
