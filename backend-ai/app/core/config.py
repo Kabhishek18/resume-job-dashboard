@@ -1,6 +1,6 @@
 from typing import Literal, List
 
-from pydantic import Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +29,28 @@ class Settings(BaseSettings):
     jobspy_proxy: str = ""
     # Indeed is opt-in: many networks get HTTP 403. Set JOBSPY_RUN_INDEED=true in .env to scrape Indeed.
     jobspy_run_indeed: bool = False
+
+    # Firecrawl (optional): Naukri search pages are often JS-heavy; used when direct HTML has no listing links.
+    firecrawl_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("FIRECRAWL_API_KEY", "FireCrawl_API_KEY"),
+    )
+    firecrawl_api_url: str = "https://api.firecrawl.dev"
+    firecrawl_enabled: bool = True  # Set FIRECRAWL_ENABLED=false to skip even when key is set
+
+    # Naukri: HTML + optional Firecrawl (never passed to python-jobspy).
+    naukri_html_enabled: bool = True
+    naukri_max_listings: int = 18
+    naukri_http_user_agent: str = ""
+
+    @field_validator("naukri_max_listings", mode="before")
+    @classmethod
+    def _clamp_naukri_max(cls, v: object) -> int:
+        try:
+            n = int(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            n = 18
+        return max(1, min(100, n))
 
 
 settings = Settings()

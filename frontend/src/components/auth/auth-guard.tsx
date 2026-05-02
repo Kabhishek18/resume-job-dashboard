@@ -21,8 +21,14 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!hydrated) return
     if (!token) {
-      const q = pathname ? `?next=${encodeURIComponent(pathname)}` : ""
-      router.replace(`/login${q}`)
+      const sp = new URLSearchParams()
+      if (pathname) sp.set("next", pathname)
+      if (useAuthStore.getState().sessionExpiredRedirect) {
+        sp.set("expired", "1")
+        useAuthStore.getState().clearSessionExpiredRedirect()
+      }
+      const suffix = sp.toString() ? `?${sp.toString()}` : ""
+      router.replace(`/login${suffix}`)
     }
   }, [hydrated, token, router, pathname])
 

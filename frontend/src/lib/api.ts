@@ -1,3 +1,5 @@
+import { useAuthStore } from "@/store/useAuthStore"
+
 const DEFAULT_TIMEOUT_MS = 15_000
 
 export class ApiError extends Error {
@@ -10,10 +12,15 @@ export class ApiError extends Error {
   }
 }
 
+function sessionExpiredThrow(): never {
+  useAuthStore.getState().logout({ sessionExpired: true })
+  throw new ApiError("SESSION_EXPIRED", "Your session has expired. Please sign in again.")
+}
+
 function apiBase(): string {
   const base =
-    process.env.NEXT_PUBLIC_API_BASE ??
-    process.env.NEXT_PUBLIC_API_URL ??
+    process.env.NEXT_PUBLIC_API_BASE ||
+    process.env.NEXT_PUBLIC_API_URL ||
     "http://localhost:8000"
   return base.replace(/\/$/, "")
 }
@@ -57,6 +64,9 @@ export async function apiFetch<T>(
     try {
       json = await res.json()
     } catch {
+      if (!res.ok && res.status === 401 && token) {
+        sessionExpiredThrow()
+      }
       throw new ApiError(
         "INVALID_RESPONSE",
         res.ok ? "Success body was not valid JSON" : "Error body was not valid JSON",
@@ -64,9 +74,17 @@ export async function apiFetch<T>(
     }
 
     const apiErr = extractError(json)
-    if (apiErr) throw apiErr
+    if (apiErr) {
+      if (token && apiErr.code === "UNAUTHORIZED") {
+        sessionExpiredThrow()
+      }
+      throw apiErr
+    }
 
     if (!res.ok) {
+      if (token && res.status === 401) {
+        sessionExpiredThrow()
+      }
       throw new ApiError("HTTP_ERROR", `Request failed (${res.status})`)
     }
 
@@ -111,10 +129,21 @@ export async function apiFetchRaw(
       try {
         json = await res.json()
       } catch {
+        if (token && res.status === 401) {
+          sessionExpiredThrow()
+        }
         throw new ApiError("HTTP_ERROR", `Request failed (${res.status})`)
       }
       const apiErr = extractError(json)
-      if (apiErr) throw apiErr
+      if (apiErr) {
+        if (token && apiErr.code === "UNAUTHORIZED") {
+          sessionExpiredThrow()
+        }
+        throw apiErr
+      }
+      if (token && res.status === 401) {
+        sessionExpiredThrow()
+      }
       throw new ApiError("HTTP_ERROR", `Request failed (${res.status})`)
     }
 

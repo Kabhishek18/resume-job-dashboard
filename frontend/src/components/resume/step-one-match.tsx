@@ -32,9 +32,10 @@ const RESUME_UPLOAD_ACCEPT =
   ".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
 
 function apiBaseHint(): string {
-  return (
-    process.env.NEXT_PUBLIC_API_BASE ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
-  ).replace(/\/$/, "")
+  return (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(
+    /\/$/,
+    "",
+  )
 }
 
 function ImportHealthBadge({ mode }: { mode: ImportPreviewMode | null }) {

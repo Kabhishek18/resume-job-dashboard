@@ -18,6 +18,8 @@ export default function LoginForm() {
   const searchParams = useSearchParams()
   const setAuth = useAuthStore((s) => s.setAuth)
 
+  const sessionExpired = searchParams.get("expired") === "1"
+
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -48,6 +50,11 @@ export default function LoginForm() {
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
+          {sessionExpired ? (
+            <p className="border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100 rounded-md border px-3 py-2 text-sm">
+              Session expired. Please sign in again.
+            </p>
+          ) : null}
           <div className="space-y-2">
             <Label htmlFor="login-email">Email</Label>
             <Input

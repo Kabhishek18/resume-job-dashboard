@@ -10,8 +10,10 @@ vi.mock("@/store/useAuthStore", () => ({
     selector({
       token: "test-token",
       user: null,
+      sessionExpiredRedirect: false,
       setAuth: () => {},
       logout: () => {},
+      clearSessionExpiredRedirect: () => {},
     }),
 }))
 afterEach(() => cleanup())

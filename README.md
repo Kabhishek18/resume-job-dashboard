@@ -2,24 +2,34 @@
 
 Monorepo layout:
 
-- **`backend-ai/`** — FastAPI app: `/api/health`, `/api/parse`, `/api/match`, auth/profile, URL import preview, tailoring (stub vs `llm` placeholder). Alembic migrations. Python 3.9+.
+- **`backend-ai/`** — FastAPI app: `/api/health`, `/api/parse`, `/api/match`, auth/profile, URL import preview, tailoring (stub vs `llm` placeholder). Alembic migrations. Python 3.10+.
 - **`frontend/`** — Next.js (App Router) + Tailwind + shadcn/ui. Resume wizard (match + tailor) posts to the API.
 
 ## Prerequisites
 
 - Node.js 18+ (npm).
-- Python 3.9+ with `pip`.
+- Python 3.10+ with `pip`.
 
 ## Backend (FastAPI)
 
+Preferred local startup:
+
+```bash
+./start.sh
+```
+
+Manual backend setup also works, but use Python 3.10+ (JobSpy will not import on 3.9):
+
 ```bash
 cd backend-ai
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
+
+If JobSpy still returns connection errors, check `backend-ai/.env`: `JOBSPY_PROXY` is optional and should be left unset unless you are intentionally routing scraper traffic through a working proxy.
 
 The app runs **Alembic migrations** on startup as well; `alembic upgrade head` keeps the DB current if you run workers without the FastAPI lifespan.
 

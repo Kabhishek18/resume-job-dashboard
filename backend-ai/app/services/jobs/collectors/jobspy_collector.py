@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from app.core.config import settings
+from app.services.jobs.collectors.naukri_html import collect_naukri_html
 from app.services.jobs.collectors.types import CollectedRow, PortalRunOutcome, normalize_portal_id
 
 try:
@@ -51,6 +52,30 @@ def _jobspy_scrape_kw(
     if pxy:
         kw["proxy"] = pxy
     return kw
+
+
+def _looks_like_proxy_failure(exc: Exception, proxy: str) -> bool:
+    msg = str(exc).lower()
+    proxy_l = proxy.lower()
+    proxy_host = proxy_l.split("://", 1)[-1]
+    proxy_markers = ("proxy", "127.0.0.1", "localhost")
+    failure_markers = (
+        "proxyerror",
+        "proxy error",
+        "cannot connect to proxy",
+        "failed to establish a new connection",
+        "max retries exceeded",
+        "connection refused",
+        "connection aborted",
+        "connect timeout",
+        "timed out",
+        "name or service not known",
+        "nodename nor servname provided",
+    )
+    mentions_proxy = any(marker in msg for marker in proxy_markers) or any(
+        marker in proxy_host for marker in proxy_markers
+    )
+    return mentions_proxy and any(marker in msg for marker in failure_markers)
 
 
 def _collector_note_for_failures(
@@ -152,6 +177,31 @@ def _row_to_collected(row: pd.Series) -> CollectedRow:
     )
 
 
+def _merge_naukri_html(
+    rows: list[CollectedRow],
+    outcomes: dict[str, PortalRunOutcome],
+    profile: dict[str, Any],
+    note: str | None,
+    portals: list[str],
+) -> tuple[list[CollectedRow], dict[str, PortalRunOutcome], str | None]:
+    """Append Naukri HTML/Firecrawl rows and set outcomes['naukri']."""
+    if "naukri" not in portals or not settings.naukri_html_enabled:
+        return rows, outcomes, note
+
+    n_rows, n_note = collect_naukri_html(profile)
+    merged = rows + n_rows
+    if n_rows:
+        outcomes["naukri"] = PortalRunOutcome(row_count=len(n_rows), state="ok")
+    elif n_note and "Naukri discovery failed" in n_note:
+        outcomes["naukri"] = PortalRunOutcome(row_count=0, state="unavailable")
+    else:
+        outcomes["naukri"] = PortalRunOutcome(row_count=0, state="no_results")
+
+    parts = [str(x).strip() for x in (note, n_note) if x and str(x).strip()]
+    final_note = " ".join(parts)[:900] if parts else None
+    return merged, outcomes, final_note
+
+
 def collect_jobspy(
     profile: dict[str, Any],
 ) -> tuple[list[CollectedRow], dict[str, PortalRunOutcome], str | None]:
@@ -170,24 +220,32 @@ def collect_jobspy(
         return [], {}, None
 
     outcomes: dict[str, PortalRunOutcome] = {p: PortalRunOutcome(row_count=0, state="no_results") for p in portals}
+    naukri_wanted = "naukri" in portals and settings.naukri_html_enabled
 
     if _scrape_jobs is None:
         for p in portals:
+            if p == "naukri" and settings.naukri_html_enabled:
+                continue
             outcomes[p] = PortalRunOutcome(row_count=0, state="unavailable")
-        note = (
+        inst_note = (
             "Job search needs Python 3.10+ with python-jobspy installed. "
             "Use your conda env (e.g. job-resume-backend) or recreate backend-ai/.venv with Python 3.11+, then pip install -r requirements.txt."
         )
         logger.warning("jobspy: package not importable (Python version or missing install)")
-        return [], outcomes, note
+        return _merge_naukri_html([], outcomes, profile, inst_note, portals)
 
     supported = _jobspy_supported_site_values()
-    sites_arg = [p for p in portals if p in supported]
-    unsupported = [p for p in portals if p not in supported]
-    for p in unsupported:
-        outcomes[p] = PortalRunOutcome(row_count=0, state="unavailable")
+    sites_arg = [p for p in portals if p in supported and p != "naukri"]
 
-    if not sites_arg:
+    for p in portals:
+        if p == "naukri":
+            if not settings.naukri_html_enabled:
+                outcomes[p] = PortalRunOutcome(row_count=0, state="unavailable")
+            continue
+        if p not in supported:
+            outcomes[p] = PortalRunOutcome(row_count=0, state="unavailable")
+
+    if not sites_arg and not naukri_wanted:
         joined = ", ".join(sorted(supported)) if supported else "(none)"
         note = (
             f"No selected portals are supported by this JobSpy install ({joined}). "
@@ -205,7 +263,7 @@ def collect_jobspy(
             "(many networks get HTTP 403 from Indeed)."
         )
 
-    if not sites_arg:
+    if not sites_arg and not naukri_wanted:
         extra = (
             "No boards left to scrape for this profile. "
             "Include LinkedIn, or set JOBSPY_RUN_INDEED=true to try Indeed."
@@ -223,26 +281,56 @@ def collect_jobspy(
     location = (profile.get("locations") or "").strip()
     scrape_kw = _jobspy_scrape_kw(search, location, profile)
 
-    # One scrape per portal so one board’s error does not abort the others.
     failures: list[tuple[str, str]] = []
     frames: list[pd.DataFrame] = []
     failed_sites: set[str] = set()
+    proxy_fallback_used = False
 
     for site in sites_arg:
+        retried_without_proxy = False
         try:
             df_site = _scrape_jobs(site_name=[site], **scrape_kw)
         except Exception as exc:
-            logger.warning("jobspy scrape_jobs failed for %s", site, exc_info=True)
-            failed_sites.add(site)
-            msg = str(exc).strip()[:240] or type(exc).__name__
-            failures.append((site, msg))
-            continue
+            proxy = str(scrape_kw.get("proxy") or "").strip()
+            if proxy and _looks_like_proxy_failure(exc, proxy):
+                retry_kw = dict(scrape_kw)
+                retry_kw.pop("proxy", None)
+                logger.warning(
+                    "jobspy scrape_jobs hit proxy failure for %s; retrying without proxy %s",
+                    site,
+                    proxy,
+                    exc_info=True,
+                )
+                try:
+                    df_site = _scrape_jobs(site_name=[site], **retry_kw)
+                    proxy_fallback_used = True
+                    retried_without_proxy = True
+                except Exception as retry_exc:
+                    exc = retry_exc
+            if not retried_without_proxy:
+                logger.warning("jobspy scrape_jobs failed for %s", site, exc_info=True)
+                failed_sites.add(site)
+                msg = str(exc).strip()[:240] or type(exc).__name__
+                failures.append((site, msg))
+                continue
+            if df_site is None or len(df_site) == 0:
+                continue
+        else:
+            if df_site is None or len(df_site) == 0:
+                continue
+        if retried_without_proxy:
+            logger.info("jobspy scrape_jobs succeeded for %s after retrying without proxy", site)
         if df_site is not None and len(df_site) > 0:
             frames.append(df_site)
 
     any_results = bool(frames)
     fail_note = _collector_note_for_failures(failures, any_results)
     note_parts = [*prefix_notes]
+    if proxy_fallback_used:
+        note_parts.append(
+            "Configured JOBSPY_PROXY failed, so this run retried direct connections. "
+            "Remove or fix JOBSPY_PROXY in backend-ai/.env if you are not intentionally using a proxy."
+        )
     if fail_note:
         note_parts.append(fail_note)
     note = " ".join(note_parts).strip()[:900] if note_parts else None
@@ -255,7 +343,7 @@ def collect_jobspy(
                 outcomes[p] = PortalRunOutcome(row_count=0, state="unavailable")
             else:
                 outcomes[p] = PortalRunOutcome(row_count=0, state="no_results")
-        return [], outcomes, note
+        return _merge_naukri_html([], outcomes, profile, note, portals)
 
     rows: list[CollectedRow] = []
     for _, series in df.iterrows():
@@ -277,4 +365,4 @@ def collect_jobspy(
             n = int(counts.get(p, 0))
             outcomes[p] = PortalRunOutcome(row_count=n, state="ok" if n > 0 else "no_results")
 
-    return rows, outcomes, note
+    return _merge_naukri_html(rows, outcomes, profile, note, portals)

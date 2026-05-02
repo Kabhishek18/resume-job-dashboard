@@ -126,9 +126,12 @@ def test_jobspy_collector_maps_dataframe(mock_scrape, enable_jobspy_indeed):
     assert outcomes["indeed"].row_count == 0
 
 
+@patch("app.services.jobs.collectors.jobspy_collector.collect_naukri_html")
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
-def test_jobspy_collector_no_scrape_when_only_unsupported_portals(mock_scrape):
+def test_jobspy_collector_no_scrape_when_only_unsupported_portals(mock_scrape, mock_naukri):
     from app.services.jobs.collectors.jobspy_collector import collect_jobspy
+
+    mock_naukri.return_value = ([], None)
 
     rows, outcomes, note = collect_jobspy(
         {"selected_portals": ["glassdoor", "naukri"], "keywords": "dev", "remote_only": False}
@@ -136,10 +139,9 @@ def test_jobspy_collector_no_scrape_when_only_unsupported_portals(mock_scrape):
 
     assert rows == []
     mock_scrape.assert_not_called()
+    mock_naukri.assert_called_once()
     assert outcomes["glassdoor"].state == "unavailable"
-    assert outcomes["naukri"].state == "unavailable"
-    assert note is not None
-    assert "JobSpy install" in (note or "")
+    assert outcomes["naukri"].state == "no_results"
 
 
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
@@ -183,9 +185,10 @@ def test_jobspy_collector_indeed_403_linkedin_still_returns_rows(mock_scrape, en
 
 
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
-def test_jobspy_indeed_not_scraped_by_default(mock_scrape):
+def test_jobspy_indeed_not_scraped_by_default(mock_scrape, monkeypatch: pytest.MonkeyPatch):
     from app.services.jobs.collectors.jobspy_collector import collect_jobspy
 
+    monkeypatch.setattr(settings, "jobspy_run_indeed", False)
     mock_scrape.return_value = pd.DataFrame(
         [{"site": "linkedin", "title": "T", "company": "C", "location": "", "job_url": "https://u"}]
     )
@@ -214,3 +217,28 @@ def test_jobspy_collector_marks_unavailable_on_scrape_error(mock_scrape):
     assert outcomes["linkedin"].state == "unavailable"
     assert note is not None
     assert "blocked" in (note or "")
+
+
+@patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
+def test_jobspy_collector_retries_without_proxy_on_proxy_failure(
+    mock_scrape, monkeypatch: pytest.MonkeyPatch
+):
+    from app.services.jobs.collectors.jobspy_collector import collect_jobspy
+
+    monkeypatch.setattr(settings, "jobspy_proxy", "http://127.0.0.1:8888")
+    mock_scrape.side_effect = [
+        RuntimeError("ProxyError: HTTPConnectionPool(host='127.0.0.1', port=8888): Max retries exceeded"),
+        pd.DataFrame([{"site": "linkedin", "title": "Engineer", "company": "Acme", "location": "", "job_url": "https://u"}]),
+    ]
+
+    rows, outcomes, note = collect_jobspy({"selected_portals": ["linkedin"], "keywords": "x", "remote_only": False})
+
+    assert len(rows) == 1
+    assert outcomes["linkedin"].state == "ok"
+    assert mock_scrape.call_count == 2
+    first_call = mock_scrape.call_args_list[0].kwargs
+    second_call = mock_scrape.call_args_list[1].kwargs
+    assert first_call["proxy"] == "http://127.0.0.1:8888"
+    assert "proxy" not in second_call
+    assert note is not None
+    assert "JOBSPY_PROXY" in note
