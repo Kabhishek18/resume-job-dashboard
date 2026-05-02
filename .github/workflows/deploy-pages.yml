@@ -1,21 +1,19 @@
-# Deploy the Next.js frontend as static HTML/CSS/JS to GitHub Pages.
+# Deploy the Next.js static export to the `gh-pages` branch (classic GitHub Pages).
+# This avoids actions/deploy-pages, which returns 404 if the "Actions" Pages backend
+# is not available for your repo (common on free private repos or misconfigured sites).
 #
-# If deploy fails with: "Failed to create deployment (status: 404)" or HttpError Not Found:
+# One-time setup:
+#   1) Repo → Settings → Pages → Build and deployment → Source: **Deploy from a branch**
+#   2) Branch: **gh-pages** · Folder: **/ (root)** → Save
+#   3) Run this workflow (or push to main). The `gh-pages` branch is created automatically.
 #
-#   1) Enable Pages + Actions (required)
-#      Repo → Settings → Pages → Build and deployment → Source: **GitHub Actions** → Save.
-#      https://github.com/<owner>/<repo>/settings/pages
+# Free GitHub: Pages for a **private** repository is not available — use a **public** repo,
+# upgrade the plan, or host the frontend on Vercel/Netlify instead.
 #
-#   2) Free GitHub + *private* repo
-#      GitHub Pages does not publish private repos on the free plan. Fix one of:
-#      - Settings → General → Danger zone → Change repository visibility → **Public**, OR
-#      - Use GitHub Pro/Team/Enterprise for private Pages, OR
-#      - Host the static site elsewhere (Vercel, Netlify, Cloudflare Pages).
+# Site URL: Settings → Pages (e.g. https://<user>.github.io/<repo>/)
 #
-#   3) Re-run this workflow after changing Pages settings or visibility.
-#
-# Optional: Actions → Variables → PUBLIC_API_BASE_URL (FastAPI origin, no trailing slash).
-#           PAGES_BASE_PATH to override subpath (e.g. "" for user.github.io root).
+# Optional: Actions → Variables → PUBLIC_API_BASE_URL (FastAPI, no trailing slash).
+#           PAGES_BASE_PATH to override Next basePath if needed.
 
 name: Deploy (GitHub Pages)
 
@@ -25,21 +23,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: github-pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      # Avoid actions/configure-pages: it hits the Pages API and 404s until Pages is enabled (Settings).
       - name: Resolve Next.js base path (for GitHub Pages URL)
         id: pages
         env:
@@ -80,24 +75,13 @@ jobs:
         run: |
           if [[ ! -f frontend/out/index.html ]]; then
             echo "Expected frontend/out/index.html after STATIC_EXPORT=true build."
-            echo "Ensure next.config enables output export when STATIC_EXPORT is set, then push again."
             ls -la frontend/out 2>&1 || ls -la frontend
             exit 1
           fi
 
-      - uses: actions/upload-pages-artifact@v3
+      - name: Publish to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: frontend/out
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./frontend/out
+          force_orphan: true
