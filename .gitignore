@@ -1,0 +1,15 @@
+# Python
+backend-ai/data/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Node / Next
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# OS
+.DS_Store
