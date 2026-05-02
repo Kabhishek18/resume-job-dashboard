@@ -1,5 +1,21 @@
 import type { JobSearchRunApi } from "@/types/jobs"
 
+const PORTAL_DISPLAY: Record<string, string> = {
+  linkedin: "LinkedIn",
+  indeed: "Indeed",
+  glassdoor: "Glassdoor",
+  naukri: "Naukri",
+  zip_recruiter: "ZipRecruiter",
+}
+
+/** Pretty name for portal keys in run summaries (e.g. zip_recruiter → ZipRecruiter). */
+export function portalLabel(portalKey: string): string {
+  const k = portalKey.toLowerCase()
+  if (PORTAL_DISPLAY[k]) return PORTAL_DISPLAY[k]
+  if (!portalKey) return portalKey
+  return portalKey.charAt(0).toUpperCase() + portalKey.slice(1)
+}
+
 type PortalSummary = { rows: number; state: string }
 
 function portalSummaries(run: JobSearchRunApi): Record<string, PortalSummary> | null {
@@ -20,6 +36,7 @@ export function friendlyRunSummaryLine(run: JobSearchRunApi | null): string {
     /^Job search failed:/i.test(note) ||
     /^Some job boards failed/i.test(note) ||
     /Indeed is not queried unless JOBSPY_RUN_INDEED/i.test(note) ||
+    /ZipRecruiter is not queried unless JOBSPY_RUN_ZIP_RECRUITER/i.test(note) ||
     /No boards left to scrape/i.test(note)
 
   const parts: string[] = []
@@ -51,12 +68,12 @@ export function friendlyRunSummaryLine(run: JobSearchRunApi | null): string {
   if (portals) {
     const unavailable = Object.entries(portals).filter(([, v]) => v.state === "unavailable")
     if (unavailable.length) {
-      const names = unavailable.map(([name]) => name.charAt(0).toUpperCase() + name.slice(1))
+      const names = unavailable.map(([name]) => portalLabel(name))
       parts.push(`Unavailable: ${names.join(", ")}.`)
     }
     const noHits = Object.entries(portals).filter(([, v]) => v.state === "no_results")
     if (noHits.length && outcome !== "no_results") {
-      const names = noHits.map(([name]) => name.charAt(0).toUpperCase() + name.slice(1))
+      const names = noHits.map(([name]) => portalLabel(name))
       parts.push(`No listings from: ${names.join(", ")}.`)
     }
   }

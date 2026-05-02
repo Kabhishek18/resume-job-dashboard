@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -46,6 +46,7 @@ const RESULTS_WANTED_OPTIONS = ["", "15", "30", "50", "75", "100", "150", "200"]
 const PORTALS: { id: JobsPortalId; label: string }[] = [
   { id: "linkedin", label: "LinkedIn" },
   { id: "indeed", label: "Indeed" },
+  { id: "zip_recruiter", label: "ZipRecruiter" },
   { id: "glassdoor", label: "Glassdoor" },
   { id: "naukri", label: "Naukri" },
 ]
@@ -115,14 +116,16 @@ export function JobsDashboard() {
   const [sortKey, setSortKey] = useState<SortKey>("title")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
   const [resultsPage, setResultsPage] = useState(1)
-  const [pageSize, setPageSize] = useState<number>(25)
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize())
 
   const [boardEntries, setBoardEntries] = useState<BoardEntryApi[]>([])
 
   const [savedResumeText, setSavedResumeText] = useState<string | null>(null)
-  const [matchTick, setMatchTick] = useState(0)
-  /** undefined = not scored yet; -1 = error */
-  const matchScoreRef = useRef<Record<number, number | undefined>>({})
+  /** Completed scores only (-1 = error). Missing key = still loading. */
+  const [matchScores, setMatchScores] = useState<Record<number, number>>({})
+  const matchInflightRef = useRef(new Set<number>())
+  /** Mirrors completed scores for queueing (sync cleared with reset; avoids stale closure vs effects). */
+  const matchScoresWorkRef = useRef<Record<number, number>>({})
 
   const hasResume = Boolean((savedResumeText ?? "").trim())
   const showMatchColumn = hasResume
@@ -137,19 +140,19 @@ export function JobsDashboard() {
         return blob.includes(q)
       })
     }
-    const getMatch = (id: number) => {
-      const s = matchScoreRef.current[id]
+    const sortMatchValue = (id: number) => {
+      const s = matchScores[id]
       if (typeof s === "number" && s >= 0) return s
       return -1
     }
     if (sortKey === "match_score") {
       return [...rows].sort((a, b) => {
-        const c = getMatch(a.id) - getMatch(b.id)
+        const c = sortMatchValue(a.id) - sortMatchValue(b.id)
         return sortDir === "asc" ? c : -c
       })
     }
     return [...rows].sort((a, b) => compareRows(a, b, sortKey, sortDir))
-  }, [results, filterText, sortKey, sortDir, matchTick])
+  }, [results, filterText, sortKey, sortDir, matchScores])
 
   const totalPages = Math.max(1, Math.ceil(filteredSorted.length / pageSize))
   const pageSlice = useMemo(() => {
@@ -161,9 +164,11 @@ export function JobsDashboard() {
   const safePage = Math.min(resultsPage, totalPages)
   const pageSliceIds = useMemo(() => pageSlice.map((r) => r.id).join(","), [pageSlice])
 
-  useEffect(() => {
-    setPageSize(readStoredPageSize())
-  }, [])
+  const googleJobsSearchUrl = useMemo(() => {
+    const q = ["jobs", keywords.trim(), locations.trim()].filter((s) => s.length > 0).join(" ")
+    return `https://www.google.com/search?q=${encodeURIComponent(q)}`
+  }, [keywords, locations])
+
   const refreshProfiles = useCallback(async () => {
     if (!token) return
     try {
@@ -233,12 +238,17 @@ export function JobsDashboard() {
   }, [token])
 
   useEffect(() => {
-    if (!hasResume && sortKey === "match_score") setSortKey("title")
+    if (!hasResume && sortKey === "match_score") {
+      queueMicrotask(() => setSortKey("title"))
+    }
   }, [hasResume, sortKey])
 
   useEffect(() => {
-    matchScoreRef.current = {}
-    setMatchTick((t) => t + 1)
+    matchInflightRef.current.clear()
+    matchScoresWorkRef.current = {}
+    /* Sync clear: async defer races with scoring effect and can wipe freshly written scores. */
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset client cache when run/resume identity changes
+    setMatchScores({})
   }, [lastRunId, savedResumeText])
 
   useEffect(() => {
@@ -247,7 +257,8 @@ export function JobsDashboard() {
     let cancelled = false
 
     async function scoreOne(r: AggregatedJobRowApi): Promise<void> {
-      if (r.id in matchScoreRef.current) return
+      if (matchInflightRef.current.has(r.id)) return
+      matchInflightRef.current.add(r.id)
       try {
         const m = await postMatchV2({
           raw_resume_text: resume,
@@ -259,14 +270,19 @@ export function JobsDashboard() {
           },
         })
         if (cancelled) return
-        matchScoreRef.current[r.id] = m.job_match.score
+        matchScoresWorkRef.current[r.id] = m.job_match.score
+        setMatchScores((prev) => ({ ...prev, [r.id]: m.job_match.score }))
       } catch {
-        if (!cancelled) matchScoreRef.current[r.id] = -1
+        if (!cancelled) {
+          matchScoresWorkRef.current[r.id] = -1
+          setMatchScores((prev) => ({ ...prev, [r.id]: -1 }))
+        }
+      } finally {
+        matchInflightRef.current.delete(r.id)
       }
-      if (!cancelled) setMatchTick((x) => x + 1)
     }
 
-    const pending = pageSlice.filter((r) => !(r.id in matchScoreRef.current))
+    const pending = pageSlice.filter((r) => !(r.id in matchScoresWorkRef.current))
     const q = [...pending]
     const workers = [0, 1].map(async () => {
       while (q.length && !cancelled) {
@@ -279,7 +295,11 @@ export function JobsDashboard() {
     return () => {
       cancelled = true
     }
-  }, [savedResumeText, pageSliceIds, pageSlice.length])
+  },
+  // pageSlice omitted: pageSliceIds + length track the page; `pageSlice` is a new [] when unrelated state updates.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [savedResumeText, pageSliceIds, pageSlice.length],
+  )
 
   const fillFromProfile = (p: SearchProfileApi) => {
     setName(p.name)
@@ -460,8 +480,8 @@ export function JobsDashboard() {
           <CardHeader className="space-y-1 border-b pb-4">
             <CardTitle className="text-lg">Job search</CardTitle>
             <CardDescription>
-              Run a saved search across LinkedIn, Indeed, Glassdoor, and Naukri. Results are deduped by apply link; export
-              matches what you filter and sort below.
+              Run a saved search across LinkedIn, Indeed, ZipRecruiter, Glassdoor, and Naukri. Results are deduped by
+              apply link; export matches what you filter and sort below.
             </CardDescription>
             {lastRun ? (
               <p className="text-foreground pt-2 text-sm font-medium leading-snug">{runSummary}</p>
@@ -530,7 +550,6 @@ export function JobsDashboard() {
                     </option>
                   ))}
                 </select>
-                <p className="text-muted-foreground text-xs">JobSpy up to 200 listings; Naukri up to 100 per run.</p>
               </div>
             </div>
 
@@ -550,13 +569,21 @@ export function JobsDashboard() {
                   </label>
                 ))}
               </div>
-              <p className="text-muted-foreground max-w-xl text-xs leading-relaxed">
-                LinkedIn is the default reliable source. Indeed is off in the API unless you set{" "}
-                <code className="bg-muted rounded px-1 py-0.5 text-[0.7rem]">JOBSPY_RUN_INDEED=true</code> in{" "}
-                <code className="bg-muted rounded px-1 py-0.5 text-[0.7rem]">backend-ai/.env</code> (many networks get
-                HTTP 403). Naukri is not available in the current <code className="bg-muted rounded px-1 py-0.5 text-[0.7rem]">python-jobspy</code>{" "}
-                wheel.
-              </p>
+              {pickedPortals.includes("indeed") ? (
+                <p className="text-muted-foreground text-xs leading-snug">
+                  Indeed is queried only when <code className="text-foreground rounded bg-muted px-1">JOBSPY_RUN_INDEED=true</code>{" "}
+                  is set in the backend <code className="text-foreground rounded bg-muted px-1">.env</code> (many networks get HTTP
+                  403; a <code className="text-foreground rounded bg-muted px-1">JOBSPY_PROXY</code> often helps).
+                </p>
+              ) : null}
+              {pickedPortals.includes("zip_recruiter") ? (
+                <p className="text-muted-foreground text-xs leading-snug">
+                  ZipRecruiter is queried only when{" "}
+                  <code className="text-foreground rounded bg-muted px-1">JOBSPY_RUN_ZIP_RECRUITER=true</code> is set in the backend{" "}
+                  <code className="text-foreground rounded bg-muted px-1">.env</code> (many networks get 403;{" "}
+                  <code className="text-foreground rounded bg-muted px-1">JOBSPY_PROXY</code> often helps).
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -566,6 +593,15 @@ export function JobsDashboard() {
               <Button type="button" onClick={() => void runSearch()} disabled={busy || selectedProfileId === null} data-testid="jobs-run-search">
                 {busy ? "Working…" : "Run search"}
               </Button>
+              <a
+                href={googleJobsSearchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "no-underline")}
+                data-testid="jobs-google-search"
+              >
+                Search on Google
+              </a>
             </div>
 
             <div className="grid gap-3 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -783,11 +819,11 @@ export function JobsDashboard() {
                         <td className="text-muted-foreground p-2.5 align-middle capitalize">{r.portal}</td>
                         {showMatchColumn ? (
                           <td className="text-foreground p-2.5 align-middle tabular-nums text-xs font-medium">
-                            {!(r.id in matchScoreRef.current)
+                            {!(r.id in matchScores)
                               ? "…"
-                              : matchScoreRef.current[r.id] === -1
+                              : matchScores[r.id] === -1
                                 ? "—"
-                                : String(matchScoreRef.current[r.id])}
+                                : String(matchScores[r.id])}
                           </td>
                         ) : null}
                         <td className="p-2.5 align-middle">

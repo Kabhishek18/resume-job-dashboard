@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     jobspy_proxy: str = ""
     # Indeed is opt-in: many networks get HTTP 403. Set JOBSPY_RUN_INDEED=true in .env to scrape Indeed.
     jobspy_run_indeed: bool = False
+    # ZipRecruiter is opt-in for the same reason as Indeed.
+    jobspy_run_zip_recruiter: bool = False
 
     # LinkedIn guest fetch (httpx + HTML cards): no JobSpy, ignores JOBSPY_PROXY.
     linkedin_guest_enabled: bool = True

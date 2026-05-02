@@ -75,6 +75,21 @@ describe("JobsDashboard", () => {
     await waitFor(() => expect(JobsService.listSearchProfiles).toHaveBeenCalledWith("test-token"))
   })
 
+  it("shows Google search link and Indeed / ZipRecruiter hints when selected", async () => {
+    render(<JobsDashboard />)
+    await waitFor(() => expect(screen.getByTestId("jobs-google-search")).toBeTruthy())
+    const google = screen.getByTestId("jobs-google-search") as HTMLAnchorElement
+    expect(google.getAttribute("href")).toMatch(/^https:\/\/www\.google\.com\/search\?q=/)
+
+    expect(screen.queryByText(/JOBSPY_RUN_INDEED/)).toBeNull()
+    await userEvent.click(screen.getByRole("checkbox", { name: /^Indeed$/i }))
+    expect(screen.getByText(/JOBSPY_RUN_INDEED/)).toBeTruthy()
+
+    expect(screen.queryByText(/JOBSPY_RUN_ZIP_RECRUITER/)).toBeNull()
+    await userEvent.click(screen.getByRole("checkbox", { name: /^ZipRecruiter$/i }))
+    expect(screen.getByText(/JOBSPY_RUN_ZIP_RECRUITER/)).toBeTruthy()
+  })
+
   it("loads board when switching to Board tab", async () => {
     render(<JobsDashboard />)
     const user = userEvent.setup()

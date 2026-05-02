@@ -12,6 +12,16 @@ from app.services.jobs.collectors.types import CollectedRow, PortalRunOutcome
 client = TestClient(app)
 
 
+def test_normalize_portal_id_zip_recruiter_and_aliases():
+    from app.services.jobs.collectors.types import normalize_portal_id
+
+    assert normalize_portal_id("zip_recruiter") == "zip_recruiter"
+    assert normalize_portal_id("ZIP_RECRUITER") == "zip_recruiter"
+    assert normalize_portal_id("ziprecruiter") == "zip_recruiter"
+    assert normalize_portal_id("zip recruiter") == "zip_recruiter"
+    assert normalize_portal_id("linkedin") == "linkedin"
+
+
 @pytest.fixture
 def enable_jobspy_indeed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests that expect Indeed to be scraped must opt in (defaults to off)."""
@@ -80,6 +90,53 @@ def test_dashboard_summary_counts_and_recent(mock_collect):
     assert body["board_counts_by_status"]["saved"] == 1
     assert len(body["recent_board_entries"]) == 1
     assert body["most_recent_run"]["id"] == run_id
+
+
+@pytest.fixture
+def enable_jobspy_zip_recruiter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that expect ZipRecruiter to be scraped must opt in (defaults to off)."""
+    monkeypatch.setattr(settings, "jobspy_run_zip_recruiter", True)
+
+
+@patch("app.services.jobs.collectors.jobspy_collector._jobspy_supported_site_values", return_value=frozenset({"linkedin", "indeed", "zip_recruiter", "glassdoor"}))
+@patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
+def test_jobspy_collector_zip_recruiter_passed_to_scrape(mock_scrape, _supported, enable_jobspy_zip_recruiter):
+    from app.services.jobs.collectors.jobspy_collector import collect_jobspy
+
+    mock_scrape.return_value = pd.DataFrame(
+        [{"site": "zip_recruiter", "title": "Z", "company": "Y", "location": "", "job_url": "https://zr.example/j1"}]
+    )
+    rows, outcomes, note = collect_jobspy(
+        {"selected_portals": ["zip_recruiter"], "keywords": "k", "remote_only": False}
+    )
+    mock_scrape.assert_called_once()
+    assert mock_scrape.call_args.kwargs["site_name"] == ["zip_recruiter"]
+    assert len(rows) == 1
+    assert rows[0].portal == "zip_recruiter"
+    assert outcomes["zip_recruiter"].state == "ok"
+    assert outcomes["zip_recruiter"].row_count == 1
+    assert note is None
+
+
+@patch("app.services.jobs.collectors.jobspy_collector._jobspy_supported_site_values", return_value=frozenset({"linkedin", "indeed", "zip_recruiter", "glassdoor"}))
+@patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
+def test_jobspy_zip_recruiter_not_scraped_by_default(mock_scrape, _supported, monkeypatch: pytest.MonkeyPatch):
+    from app.services.jobs.collectors.jobspy_collector import collect_jobspy
+
+    monkeypatch.setattr(settings, "jobspy_run_indeed", True)
+    monkeypatch.setattr(settings, "jobspy_run_zip_recruiter", False)
+    mock_scrape.return_value = pd.DataFrame(
+        [{"site": "linkedin", "title": "T", "company": "C", "location": "", "job_url": "https://u"}]
+    )
+    rows, outcomes, note = collect_jobspy(
+        {"selected_portals": ["zip_recruiter", "linkedin"], "keywords": "python", "remote_only": False}
+    )
+    mock_scrape.assert_called_once()
+    assert mock_scrape.call_args.kwargs["site_name"] == ["linkedin"]
+    assert len(rows) == 1
+    assert outcomes["zip_recruiter"].state == "no_results"
+    assert note is not None
+    assert "JOBSPY_RUN_ZIP_RECRUITER" in (note or "")
 
 
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")

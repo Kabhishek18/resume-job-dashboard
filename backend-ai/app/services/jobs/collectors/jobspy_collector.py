@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - dev env without JobSpy / Python < 3.10
 
 logger = logging.getLogger(__name__)
 
-PORTAL_KEYS = frozenset({"linkedin", "indeed", "glassdoor", "naukri"})
+PORTAL_KEYS = frozenset({"linkedin", "indeed", "glassdoor", "naukri", "zip_recruiter"})
 
 # JobSpy returns little or nothing if search_term is missing; keep a harmless default.
 _DEFAULT_SEARCH_TERM = "software engineer"
@@ -97,7 +97,8 @@ def _collector_note_for_failures(
     if any("403" in msg or "429" in msg for _, msg in failures):
         hint = (
             " Boards often block datacenter/residential IPs (403/429). "
-            "Try LinkedIn-only, another network, or JOBSPY_PROXY in backend-ai/.env."
+            "Try LinkedIn-only, Naukri, another network, or JOBSPY_PROXY in backend-ai/.env. "
+            "Indeed and ZipRecruiter often need a working proxy even when JOBSPY_RUN_INDEED / JOBSPY_RUN_ZIP_RECRUITER are true."
         )
     if any_results:
         return f"Some job boards failed (showing results from the rest). {body}.{hint}".strip()
@@ -328,7 +329,7 @@ def collect_jobspy(
         joined = ", ".join(sorted(supported)) if supported else "(none)"
         note = (
             f"No selected portals are supported by this JobSpy install ({joined}). "
-            "Pick LinkedIn and/or Indeed, or upgrade: pip install -U python-jobspy"
+            "Pick LinkedIn, ZipRecruiter, and/or Indeed, or upgrade: pip install -U python-jobspy"
         )
         logger.warning("jobspy: no overlap between selected portals and supported sites %s", supported)
         return [], outcomes, note
@@ -341,11 +342,23 @@ def collect_jobspy(
             "Indeed is not queried unless JOBSPY_RUN_INDEED=true in backend-ai/.env "
             "(many networks get HTTP 403 from Indeed)."
         )
+    if "zip_recruiter" in sites_arg and not settings.jobspy_run_zip_recruiter:
+        sites_arg = [s for s in sites_arg if s != "zip_recruiter"]
+    if (
+        any(p == "zip_recruiter" for p in portals)
+        and "zip_recruiter" in supported
+        and not settings.jobspy_run_zip_recruiter
+    ):
+        prefix_notes.append(
+            "ZipRecruiter is not queried unless JOBSPY_RUN_ZIP_RECRUITER=true in backend-ai/.env "
+            "(many networks get HTTP 403 from ZipRecruiter)."
+        )
 
     if not sites_arg and not non_jobspy_collect:
         extra = (
             "No boards left to scrape for this profile. "
-            "Include LinkedIn, or set JOBSPY_RUN_INDEED=true to try Indeed."
+            "Include LinkedIn or Naukri, or set JOBSPY_RUN_INDEED=true / JOBSPY_RUN_ZIP_RECRUITER=true to try those boards "
+            "(often with JOBSPY_PROXY)."
         )
         note = " ".join([*prefix_notes, extra]).strip()[:900] or extra
         logger.warning("jobspy: sites_arg empty after Indeed filter / unsupported portals")

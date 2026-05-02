@@ -1,6 +1,6 @@
 /** Types for `/api/jobs/*` aggregator + board (distinct from `/api/jobs/import-preview`). */
 
-export type JobsPortalId = "linkedin" | "indeed" | "glassdoor" | "naukri"
+export type JobsPortalId = "linkedin" | "indeed" | "glassdoor" | "naukri" | "zip_recruiter"
 
 export type JobSearchTriggerMode = string
 export type JobSearchRunStatus = "queued" | "running" | "completed" | "partial" | "failed"
