@@ -75,6 +75,35 @@ jobs:
           echo "::error::Set repository variable PUBLIC_API_BASE_URL (Settings → Secrets and variables → Actions → Variables), or re-run this workflow via 'Run workflow' and enter public_api_base_url. Use your public FastAPI HTTPS origin, e.g. https://xxx.onrender.com — no trailing slash."
           exit 1
 
+      - name: Verify API is live (CI backend job does not deploy Render)
+        env:
+          BASE: ${{ steps.api.outputs.base }}
+        run: |
+          set +e
+          code=$(curl -sS -D /tmp/api_probe.hdr -o /tmp/api_probe.body -w "%{http_code}" --max-time 30 "${BASE}/api/health")
+          err=$?
+          set -e
+          if [ "$err" != "0" ]; then
+            echo "::error::Could not reach ${BASE}/api/health (curl exit $err). Check network, firewall, or wrong URL."
+            exit 1
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::error::GET ${BASE}/api/health → HTTP $code (expected 200). Pages would ship a build that cannot sign in."
+            echo "--- response headers ---"
+            sed -n '1,25p' /tmp/api_probe.hdr
+            echo "--- body (truncated) ---"
+            head -c 600 /tmp/api_probe.body || true
+            echo ""
+            echo "Reminder: the **CI** workflow only runs pytest. It does **not** deploy the API to Render."
+            echo "Create or resume a **Web Service** on Render (see Render dashboard), use start: uvicorn app.main:app --host 0.0.0.0 --port \$PORT from directory backend-ai, then set PUBLIC_API_BASE_URL to the URL Render shows."
+            if grep -qi 'x-render-routing: no-server' /tmp/api_probe.hdr 2>/dev/null; then
+              echo ""
+              echo "Render returned x-render-routing: no-server — there is no web service bound to this hostname. Fix the URL or deploy the service."
+            fi
+            exit 1
+          fi
+          echo "OK: API health check passed for ${BASE}"
+
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
