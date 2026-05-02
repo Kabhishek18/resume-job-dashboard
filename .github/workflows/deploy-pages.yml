@@ -1,14 +1,21 @@
 # Deploy the Next.js frontend as static HTML/CSS/JS to GitHub Pages.
 #
-# REQUIRED FIRST (or deploy fails — e.g. "Get Pages site" / Not Found):
-#   Settings → Pages → Build and deployment → Source: **GitHub Actions** → Save.
-#   Then re-run this workflow (Actions → Deploy (GitHub Pages) → Run workflow).
+# If deploy fails with: "Failed to create deployment (status: 404)" or HttpError Not Found:
 #
-# Optional:
-#   Actions → Variables: PUBLIC_API_BASE_URL (FastAPI origin, no trailing slash).
-#   PAGES_BASE_PATH to override subpath (e.g. "" for a user.github.io root site).
+#   1) Enable Pages + Actions (required)
+#      Repo → Settings → Pages → Build and deployment → Source: **GitHub Actions** → Save.
+#      https://github.com/<owner>/<repo>/settings/pages
 #
-# FastAPI is not hosted on Pages; set CORS on the API for your Pages URL.
+#   2) Free GitHub + *private* repo
+#      GitHub Pages does not publish private repos on the free plan. Fix one of:
+#      - Settings → General → Danger zone → Change repository visibility → **Public**, OR
+#      - Use GitHub Pro/Team/Enterprise for private Pages, OR
+#      - Host the static site elsewhere (Vercel, Netlify, Cloudflare Pages).
+#
+#   3) Re-run this workflow after changing Pages settings or visibility.
+#
+# Optional: Actions → Variables → PUBLIC_API_BASE_URL (FastAPI origin, no trailing slash).
+#           PAGES_BASE_PATH to override subpath (e.g. "" for user.github.io root).
 
 name: Deploy (GitHub Pages)
 
@@ -30,7 +37,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Avoid actions/configure-pages: it hits the Pages API and 404s until Pages is enabled (Settings).
       - name: Resolve Next.js base path (for GitHub Pages URL)
@@ -48,9 +55,9 @@ jobs:
             *) echo "base_path=/$R" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

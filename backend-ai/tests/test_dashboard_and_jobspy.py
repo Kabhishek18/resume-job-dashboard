@@ -205,11 +205,14 @@ def test_jobspy_indeed_not_scraped_by_default(mock_scrape, monkeypatch: pytest.M
     assert "JOBSPY_RUN_INDEED" in (note or "")
 
 
+@patch("app.services.jobs.collectors.jobspy_collector.collect_linkedin_guest")
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
-def test_jobspy_collector_marks_unavailable_on_scrape_error(mock_scrape):
+def test_jobspy_collector_marks_unavailable_on_scrape_error(mock_scrape, mock_guest):
     from app.services.jobs.collectors.jobspy_collector import collect_jobspy
+    from app.services.jobs.collectors.types import CollectorResult
 
     mock_scrape.side_effect = RuntimeError("blocked")
+    mock_guest.return_value = CollectorResult(rows=[], warnings=["linkedin_empty"])
 
     rows, outcomes, note = collect_jobspy({"selected_portals": ["linkedin"], "keywords": "x", "remote_only": False})
 
@@ -217,6 +220,33 @@ def test_jobspy_collector_marks_unavailable_on_scrape_error(mock_scrape):
     assert outcomes["linkedin"].state == "unavailable"
     assert note is not None
     assert "blocked" in (note or "")
+
+
+@patch("app.services.jobs.collectors.jobspy_collector.collect_linkedin_guest")
+@patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
+def test_jobspy_collector_linkedin_guest_fills_when_jobspy_fails(mock_scrape, mock_guest):
+    from app.services.jobs.collectors.jobspy_collector import collect_jobspy
+    from app.services.jobs.collectors.types import CollectorResult, CollectedRow
+
+    mock_scrape.side_effect = RuntimeError("blocked")
+    mock_guest.return_value = CollectorResult(
+        rows=[
+            CollectedRow(
+                title="Engineer",
+                company="Acme",
+                location="Berlin",
+                portal="linkedin",
+                apply_url="https://www.linkedin.com/jobs/view/1",
+                source_url="https://www.linkedin.com/jobs/view/1",
+            )
+        ],
+        warnings=[],
+    )
+
+    rows, outcomes, note = collect_jobspy({"selected_portals": ["linkedin"], "keywords": "x", "remote_only": False})
+    assert len(rows) == 1
+    assert rows[0].title == "Engineer"
+    assert outcomes["linkedin"].state == "ok"
 
 
 @patch("app.services.jobs.collectors.jobspy_collector._scrape_jobs")
