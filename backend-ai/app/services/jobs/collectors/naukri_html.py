@@ -199,7 +199,15 @@ def _extract_job_links_from_markdown(md: str) -> list[tuple[str, str]]:
     return out
 
 
+def _effective_naukri_max_listings(profile: dict[str, Any] | None) -> int:
+    rw = (profile or {}).get("results_wanted")
+    if isinstance(rw, int):
+        return max(1, min(rw, 100))
+    return settings.naukri_max_listings
+
+
 def _max_listings() -> int:
+    """Global default when no profile dict (e.g. isolated HTML parse tests)."""
     return settings.naukri_max_listings
 
 
@@ -274,16 +282,17 @@ async def _search_naukri_async(profile: dict[str, Any]) -> list[_NaukriListing]:
     out: list[_NaukriListing] = []
     seen: set[str] = set()
     urls = _search_urls_for_profile(profile)
+    cap = _effective_naukri_max_listings(profile)
 
     def append_from_html(html: str) -> None:
         nonlocal out, seen
-        for li in parse_naukri_serp_html(html):
+        for li in parse_naukri_serp_html(html, max_listings=cap):
             key = stable_key_from_url(li.url)
             if key in seen:
                 continue
             seen.add(key)
             out.append(li)
-            if len(out) >= _max_listings():
+            if len(out) >= cap:
                 return
 
     async with httpx.AsyncClient(headers=naukri_http_headers(), follow_redirects=True, timeout=30.0) as na_client:
@@ -291,7 +300,7 @@ async def _search_naukri_async(profile: dict[str, Any]) -> list[_NaukriListing]:
             html = await _fetch_html(na_client, url)
             if html:
                 append_from_html(html)
-            if len(out) >= _max_listings():
+            if len(out) >= cap:
                 return out
             if out:
                 return out
@@ -332,7 +341,7 @@ async def _search_naukri_async(profile: dict[str, Any]) -> list[_NaukriListing]:
                     company=company,
                 )
             )
-            if len(out) >= _max_listings():
+            if len(out) >= cap:
                 return out
     return out
 
@@ -355,6 +364,7 @@ def collect_naukri_html(profile: dict[str, Any]) -> tuple[list[CollectedRow], st
         "locations": profile.get("locations"),
         "target_role": profile.get("target_role"),
         "location": profile.get("location"),
+        "results_wanted": profile.get("results_wanted"),
     }
 
     try:

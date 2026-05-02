@@ -26,14 +26,30 @@ vi.mock("@/services/jobs.service", () => ({
   patchBoardEntry: vi.fn(),
 }))
 
+vi.mock("@/services/profile.service", () => ({
+  getProfile: vi.fn(),
+}))
+
 import { JobsDashboard } from "@/components/jobs/jobs-dashboard"
 import { aggregatedJobsToTsv } from "@/lib/jobs-results-export"
 import type { AggregatedJobRowApi, JobSearchRunApi } from "@/types/jobs"
+import type { ProfileApiV1 } from "@/types/profile"
 import * as JobsService from "@/services/jobs.service"
+import * as ProfileService from "@/services/profile.service"
+
+const emptyProfile: ProfileApiV1 = {
+  version: "v1",
+  id: 1,
+  email: "t@example.invalid",
+  name: "Test",
+  resume_text: null,
+  resume_updated_at: null,
+}
 
 describe("JobsDashboard", () => {
   afterEach(() => {
     cleanup()
+    localStorage.removeItem("jobs-results-page-size")
     vi.mocked(JobsService.listSearchProfiles).mockReset()
     vi.mocked(JobsService.listBoard).mockReset()
     vi.mocked(JobsService.createSearchProfile).mockReset()
@@ -43,11 +59,13 @@ describe("JobsDashboard", () => {
     vi.mocked(JobsService.getRunResults).mockReset()
     vi.mocked(JobsService.addJobToBoard).mockReset()
     vi.mocked(JobsService.patchBoardEntry).mockReset()
+    vi.mocked(ProfileService.getProfile).mockReset()
   })
 
   beforeEach(() => {
     vi.mocked(JobsService.listSearchProfiles).mockResolvedValue([])
     vi.mocked(JobsService.listBoard).mockResolvedValue([])
+    vi.mocked(ProfileService.getProfile).mockResolvedValue(emptyProfile)
   })
 
   it("renders Results and Board tabs", async () => {
@@ -76,6 +94,7 @@ describe("JobsDashboard", () => {
         posted_at: null,
         salary_text: "",
         apply_url: "https://jobs.example.invalid",
+        description_snippet: "snippet",
         duplicate_count: 1,
         source_count: 1,
       },
@@ -101,6 +120,7 @@ describe("JobsDashboard", () => {
         schedule_frequency: null,
         schedule_time: null,
         schedule_timezone: "UTC",
+        results_wanted: null,
       },
     ])
 
@@ -123,6 +143,7 @@ describe("JobsDashboard", () => {
       apply_url: `https://jobs.example.invalid/${i}`,
       duplicate_count: 1,
       source_count: 1,
+      description_snippet: "",
     }))
 
     vi.mocked(JobsService.runSearchProfile).mockResolvedValue(run)
@@ -160,6 +181,7 @@ describe("JobsDashboard", () => {
         schedule_frequency: null,
         schedule_time: null,
         schedule_timezone: "UTC",
+        results_wanted: null,
       },
     ])
     const run: JobSearchRunApi = {
@@ -181,6 +203,7 @@ describe("JobsDashboard", () => {
       apply_url: `https://jobs.example.invalid/${i}`,
       duplicate_count: 1,
       source_count: 1,
+      description_snippet: "",
     }))
     vi.mocked(JobsService.runSearchProfile).mockResolvedValue(run)
     vi.mocked(JobsService.getRun).mockResolvedValue(run)
@@ -205,5 +228,65 @@ describe("JobsDashboard", () => {
     const allPayload = write.mock.calls[1][0] as string
     expect(allPayload.split("\n").length).toBe(31)
     expect(pagePayload).not.toBe(allPayload)
+  })
+
+  it("Copy current page line count follows persisted page size", async () => {
+    localStorage.setItem("jobs-results-page-size", "10")
+    vi.mocked(JobsService.listSearchProfiles).mockResolvedValue([
+      {
+        id: 5,
+        user_id: 1,
+        name: "Mine",
+        keywords: "rust",
+        locations: "",
+        experience_levels: "",
+        employment_types: "",
+        remote_only: false,
+        selected_portals: ["linkedin"],
+        schedule_enabled: false,
+        schedule_frequency: null,
+        schedule_time: null,
+        schedule_timezone: "UTC",
+        results_wanted: null,
+      },
+    ])
+    const run: JobSearchRunApi = {
+      id: 9,
+      user_id: 1,
+      search_profile_id: 5,
+      trigger_mode: "manual",
+      status: "completed",
+      summary_json: {},
+    }
+    const many: AggregatedJobRowApi[] = Array.from({ length: 30 }, (_, i) => ({
+      id: 100 + i,
+      portal: "linkedin",
+      title: `JobTitle-${String(i).padStart(3, "0")}`,
+      company: "Co",
+      location: "",
+      posted_at: null,
+      salary_text: "",
+      apply_url: `https://jobs.example.invalid/${i}`,
+      duplicate_count: 1,
+      source_count: 1,
+      description_snippet: "",
+    }))
+    vi.mocked(JobsService.runSearchProfile).mockResolvedValue(run)
+    vi.mocked(JobsService.getRun).mockResolvedValue(run)
+    vi.mocked(JobsService.getRunResults).mockResolvedValue(many)
+
+    const write = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("navigator", { clipboard: { writeText: write } })
+
+    render(<JobsDashboard />)
+    await waitFor(() => expect(screen.getByTestId("jobs-profile-select")).toBeTruthy())
+    await userEvent.selectOptions(screen.getByTestId("jobs-profile-select"), "5")
+    await userEvent.click(screen.getByTestId("jobs-run-search"))
+    await waitFor(() => expect(screen.getByTestId("jobs-copy-page")).toBeTruthy())
+
+    await userEvent.click(screen.getByTestId("jobs-copy-page"))
+    await waitFor(() => expect(write).toHaveBeenCalled())
+    const pagePayload = write.mock.calls[0][0] as string
+    expect(pagePayload.split("\n").length).toBe(11)
   })
 })

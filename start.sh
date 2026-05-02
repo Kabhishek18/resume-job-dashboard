@@ -66,6 +66,12 @@ echo "    Uvicorn PID $UVICORN_PID — http://127.0.0.1:8000/docs"
 
 echo "==> Frontend: frontend (next dev)"
 cd "$ROOT/frontend"
+# Next 16+ dev expects .next/dev/routes-manifest.json. A prior `next build` or a
+# crashed dev server can leave .next/dev incomplete → ENOENT routes-manifest and GET / 500.
+if [[ -d .next/dev ]] && [[ ! -f .next/dev/routes-manifest.json ]]; then
+  echo "    Removing incomplete .next (missing dev routes-manifest)…" >&2
+  rm -rf .next
+fi
 if [[ ! -d node_modules ]]; then
   npm install
 fi

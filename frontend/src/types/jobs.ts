@@ -19,6 +19,8 @@ export interface SearchProfileApi {
   schedule_frequency: string | null
   schedule_time: string | null
   schedule_timezone: string | null
+  /** Per-run cap (1–200 JobSpy, 1–100 Naukri). Null = server default. */
+  results_wanted: number | null
   created_at?: string | null
   updated_at?: string | null
 }
@@ -31,6 +33,7 @@ export interface SearchProfileCreateBody {
   employment_types?: string
   remote_only?: boolean
   selected_portals?: string[]
+  results_wanted?: number | null
   schedule_enabled?: boolean
   schedule_frequency?: string | null
   schedule_time?: string | null
@@ -45,6 +48,7 @@ export interface SearchProfilePatchBody {
   employment_types?: string | null
   remote_only?: boolean | null
   selected_portals?: string[] | null
+  results_wanted?: number | null
   schedule_enabled?: boolean | null
   schedule_frequency?: string | null
   schedule_time?: string | null
@@ -72,6 +76,8 @@ export interface AggregatedJobRowApi {
   posted_at: string | null
   salary_text: string
   apply_url: string
+  /** Snippet from listing; used for match scoring. */
+  description_snippet?: string
   duplicate_count: number
   board_status?: string | null
   source_count: number

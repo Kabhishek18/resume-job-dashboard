@@ -25,6 +25,13 @@ PORTAL_KEYS = frozenset({"linkedin", "indeed", "glassdoor", "naukri"})
 _DEFAULT_SEARCH_TERM = "software engineer"
 
 
+def _effective_jobspy_results_wanted(profile: dict[str, Any]) -> int:
+    rw = profile.get("results_wanted")
+    if isinstance(rw, int):
+        return max(1, min(rw, 200))
+    return max(1, min(settings.jobspy_results_wanted, 200))
+
+
 def _jobspy_supported_site_values() -> frozenset[str]:
     """Site names accepted by the installed JobSpy (PyPI builds vary)."""
     if _scrape_jobs is None:
@@ -46,7 +53,7 @@ def _jobspy_scrape_kw(
         "search_term": search,
         "location": location,
         "is_remote": bool(profile.get("remote_only")),
-        "results_wanted": max(1, min(settings.jobspy_results_wanted, 200)),
+        "results_wanted": _effective_jobspy_results_wanted(profile),
         "country_indeed": settings.jobspy_country_indeed,
     }
     pxy = (settings.jobspy_proxy or "").strip()

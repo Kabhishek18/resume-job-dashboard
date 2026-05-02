@@ -32,6 +32,20 @@ from app.services.jobs.run_service import run_job_search_task
 
 router = APIRouter(prefix="/jobs", tags=["jobs-aggregator"])
 
+RESULTS_WANTED_MIN = 1
+RESULTS_WANTED_MAX = 200
+
+
+def _validate_results_wanted(v: int | None) -> None:
+    if v is None:
+        return
+    if v < RESULTS_WANTED_MIN or v > RESULTS_WANTED_MAX:
+        raise AppError(
+            "VALIDATION",
+            f"results_wanted must be between {RESULTS_WANTED_MIN} and {RESULTS_WANTED_MAX}",
+            status_code=400,
+        )
+
 
 def _profile_api(p: JobSearchProfile) -> SearchProfileApi:
     return SearchProfileApi(
@@ -48,6 +62,7 @@ def _profile_api(p: JobSearchProfile) -> SearchProfileApi:
         schedule_frequency=p.schedule_frequency,
         schedule_time=p.schedule_time,
         schedule_timezone=p.schedule_timezone,
+        results_wanted=p.results_wanted,
         created_at=p.created_at,
         updated_at=p.updated_at,
     )
@@ -59,6 +74,7 @@ def create_search_profile(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> SearchProfileApi:
+    _validate_results_wanted(body.results_wanted)
     p = JobSearchProfile(
         user_id=user.id,
         name=body.name.strip(),
@@ -72,6 +88,7 @@ def create_search_profile(
         schedule_frequency=body.schedule_frequency,
         schedule_time=body.schedule_time,
         schedule_timezone=body.schedule_timezone or "UTC",
+        results_wanted=body.results_wanted,
     )
     db.add(p)
     db.commit()
@@ -104,6 +121,7 @@ def patch_search_profile(
     user: Annotated[User, Depends(get_current_user)],
 ) -> SearchProfileApi:
     p = _require_profile_owned(db, user.id, search_id)
+    patch_data = body.model_dump(exclude_unset=True)
     for field in (
         "name",
         "keywords",
@@ -117,12 +135,16 @@ def patch_search_profile(
         "schedule_time",
         "schedule_timezone",
     ):
-        v = getattr(body, field)
-        if v is None:
+        if field not in patch_data:
             continue
+        v = patch_data[field]
         if field == "name" and isinstance(v, str):
             v = v.strip()
         setattr(p, field, v)
+    if "results_wanted" in patch_data:
+        rw = patch_data["results_wanted"]
+        _validate_results_wanted(rw)
+        p.results_wanted = rw
     db.commit()
     db.refresh(p)
     reschedule_all_profiles()
@@ -218,6 +240,7 @@ def run_results(
                 posted_at=job.posted_at,
                 salary_text=job.salary_text,
                 apply_url=job.apply_url,
+                description_snippet=((job.description_snippet or "")[:2000]),
                 duplicate_count=job.duplicate_count,
                 board_status=board_row.status if board_row else None,
                 source_count=max(1, src_count),
@@ -267,6 +290,7 @@ def run_results_csv(
                 "posted_at": job.posted_at or "",
                 "salary_text": job.salary_text,
                 "apply_url": job.apply_url,
+                "description_snippet": (job.description_snippet or "")[:2000],
                 "duplicate_count": job.duplicate_count,
                 "board_status": board_row.status if board_row else "",
                 "source_count": max(1, src_count),

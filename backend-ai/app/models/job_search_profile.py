@@ -28,6 +28,9 @@ class JobSearchProfile(Base):
 
     selected_portals: Mapped[List[str]] = mapped_column(JSON, nullable=False)
 
+    # Per-profile cap for JobSpy (max 200) and Naukri (max 100); NULL = use server defaults.
+    results_wanted: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     schedule_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     schedule_frequency: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     schedule_time: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)

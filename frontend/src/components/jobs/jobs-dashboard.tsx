@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,6 +10,8 @@ import { ApiError } from "@/lib/api"
 import { friendlyRunSummaryLine } from "@/lib/jobs-run-summary"
 import { aggregatedJobsToCsv, aggregatedJobsToTsv, triggerDownloadCsv } from "@/lib/jobs-results-export"
 import { cn } from "@/lib/utils"
+import { postMatchV2 } from "@/services/match.service"
+import { getProfile } from "@/services/profile.service"
 import {
   addJobToBoard,
   createSearchProfile,
@@ -29,7 +31,17 @@ export const JOBS_BOARD_TAB = "board"
 
 export { aggregatedJobsToTsv } from "@/lib/jobs-results-export"
 
-const PAGE_SIZE = 25
+const PAGE_SIZE_STORAGE_KEY = "jobs-results-page-size"
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
+
+function readStoredPageSize(): number {
+  if (typeof window === "undefined") return 25
+  const raw = window.localStorage.getItem(PAGE_SIZE_STORAGE_KEY)
+  const n = raw ? Number.parseInt(raw, 10) : 25
+  return PAGE_SIZE_OPTIONS.includes(n as (typeof PAGE_SIZE_OPTIONS)[number]) ? n : 25
+}
+
+const RESULTS_WANTED_OPTIONS = ["", "15", "30", "50", "75", "100", "150", "200"] as const
 
 const PORTALS: { id: JobsPortalId; label: string }[] = [
   { id: "linkedin", label: "LinkedIn" },
@@ -40,7 +52,7 @@ const PORTALS: { id: JobsPortalId; label: string }[] = [
 
 const BOARD_STATUSES = ["saved", "applied", "pending", "rejected", "interviewing", "offer", "new"] as const
 
-type SortKey = "title" | "company" | "portal" | "board_status"
+type SortKey = "title" | "company" | "portal" | "board_status" | "match_score"
 
 function boardStatusChipClass(status: string): string {
   const s = status.toLowerCase()
@@ -65,10 +77,18 @@ async function pollUntilRunTerminal(token: string, runId: number): Promise<void>
 }
 
 function compareRows(a: AggregatedJobRowApi, b: AggregatedJobRowApi, key: SortKey, dir: "asc" | "desc"): number {
-  const va = (key === "board_status" ? a.board_status ?? "" : String(a[key] ?? "")).toLowerCase()
-  const vb = (key === "board_status" ? b.board_status ?? "" : String(b[key] ?? "")).toLowerCase()
+  if (key === "match_score") {
+    return 0
+  }
+  const va = (key === "board_status" ? a.board_status ?? "" : String(a[key as keyof AggregatedJobRowApi] ?? "")).toLowerCase()
+  const vb = (key === "board_status" ? b.board_status ?? "" : String(b[key as keyof AggregatedJobRowApi] ?? "")).toLowerCase()
   const c = va.localeCompare(vb)
   return dir === "asc" ? c : -c
+}
+
+function jobRowRawTextForMatch(r: AggregatedJobRowApi): string {
+  const parts = [r.title, r.company, r.location, r.salary_text, r.description_snippet].filter((x) => String(x ?? "").trim())
+  return parts.length ? parts.join("\n\n") : r.title || "Job"
 }
 
 export function JobsDashboard() {
@@ -82,6 +102,7 @@ export function JobsDashboard() {
   const [keywords, setKeywords] = useState("")
   const [locations, setLocations] = useState("")
   const [pickedPortals, setPickedPortals] = useState<JobsPortalId[]>(() => ["linkedin"])
+  const [resultsWantedStr, setResultsWantedStr] = useState<string>("")
 
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -94,8 +115,18 @@ export function JobsDashboard() {
   const [sortKey, setSortKey] = useState<SortKey>("title")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
   const [resultsPage, setResultsPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(25)
 
   const [boardEntries, setBoardEntries] = useState<BoardEntryApi[]>([])
+
+  const [savedResumeText, setSavedResumeText] = useState<string | null>(null)
+  const [matchTick, setMatchTick] = useState(0)
+  /** undefined = not scored yet; -1 = error */
+  const matchScoreRef = useRef<Record<number, number | undefined>>({})
+
+  const hasResume = Boolean((savedResumeText ?? "").trim())
+  const showMatchColumn = hasResume
+  const resultsTableColSpan = 5 + (showMatchColumn ? 1 : 0)
 
   const filteredSorted = useMemo(() => {
     const q = filterText.trim().toLowerCase()
@@ -106,17 +137,33 @@ export function JobsDashboard() {
         return blob.includes(q)
       })
     }
+    const getMatch = (id: number) => {
+      const s = matchScoreRef.current[id]
+      if (typeof s === "number" && s >= 0) return s
+      return -1
+    }
+    if (sortKey === "match_score") {
+      return [...rows].sort((a, b) => {
+        const c = getMatch(a.id) - getMatch(b.id)
+        return sortDir === "asc" ? c : -c
+      })
+    }
     return [...rows].sort((a, b) => compareRows(a, b, sortKey, sortDir))
-  }, [results, filterText, sortKey, sortDir])
+  }, [results, filterText, sortKey, sortDir, matchTick])
 
-  const totalPages = Math.max(1, Math.ceil(filteredSorted.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(filteredSorted.length / pageSize))
   const pageSlice = useMemo(() => {
     const p = Math.min(resultsPage, totalPages)
-    const start = (p - 1) * PAGE_SIZE
-    return filteredSorted.slice(start, start + PAGE_SIZE)
-  }, [filteredSorted, resultsPage, totalPages])
+    const start = (p - 1) * pageSize
+    return filteredSorted.slice(start, start + pageSize)
+  }, [filteredSorted, resultsPage, totalPages, pageSize])
 
   const safePage = Math.min(resultsPage, totalPages)
+  const pageSliceIds = useMemo(() => pageSlice.map((r) => r.id).join(","), [pageSlice])
+
+  useEffect(() => {
+    setPageSize(readStoredPageSize())
+  }, [])
   const refreshProfiles = useCallback(async () => {
     if (!token) return
     try {
@@ -169,10 +216,76 @@ export function JobsDashboard() {
     }
   }, [tab, token])
 
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (!token) return
+      try {
+        const prof = await getProfile(token)
+        if (!cancelled) setSavedResumeText(prof.resume_text ?? null)
+      } catch {
+        if (!cancelled) setSavedResumeText(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!hasResume && sortKey === "match_score") setSortKey("title")
+  }, [hasResume, sortKey])
+
+  useEffect(() => {
+    matchScoreRef.current = {}
+    setMatchTick((t) => t + 1)
+  }, [lastRunId, savedResumeText])
+
+  useEffect(() => {
+    const resume = (savedResumeText ?? "").trim()
+    if (!resume || !pageSlice.length) return
+    let cancelled = false
+
+    async function scoreOne(r: AggregatedJobRowApi): Promise<void> {
+      if (r.id in matchScoreRef.current) return
+      try {
+        const m = await postMatchV2({
+          raw_resume_text: resume,
+          job: {
+            title: r.title,
+            company: r.company,
+            raw_text: jobRowRawTextForMatch(r),
+            url: r.apply_url || null,
+          },
+        })
+        if (cancelled) return
+        matchScoreRef.current[r.id] = m.job_match.score
+      } catch {
+        if (!cancelled) matchScoreRef.current[r.id] = -1
+      }
+      if (!cancelled) setMatchTick((x) => x + 1)
+    }
+
+    const pending = pageSlice.filter((r) => !(r.id in matchScoreRef.current))
+    const q = [...pending]
+    const workers = [0, 1].map(async () => {
+      while (q.length && !cancelled) {
+        const row = q.shift()
+        if (row) await scoreOne(row)
+      }
+    })
+
+    void Promise.all(workers)
+    return () => {
+      cancelled = true
+    }
+  }, [savedResumeText, pageSliceIds, pageSlice.length])
+
   const fillFromProfile = (p: SearchProfileApi) => {
     setName(p.name)
     setKeywords(p.keywords ?? "")
     setLocations(p.locations ?? "")
+    setResultsWantedStr(p.results_wanted != null && p.results_wanted >= 1 ? String(p.results_wanted) : "")
     const allowed = new Set(PORTALS.map((x) => x.id))
     const next = (p.selected_portals ?? []).filter((x): x is JobsPortalId => allowed.has(x as JobsPortalId))
     setPickedPortals(next.length ? next : ["linkedin"])
@@ -192,6 +305,7 @@ export function JobsDashboard() {
       setName("")
       setKeywords("")
       setLocations("")
+      setResultsWantedStr("")
       setPickedPortals(["linkedin"])
       return
     }
@@ -212,6 +326,9 @@ export function JobsDashboard() {
       setMessage("Select at least one jobs portal.")
       return
     }
+    const parsedRw = Number.parseInt(resultsWantedStr, 10)
+    const results_wanted =
+      resultsWantedStr.trim() === "" || Number.isNaN(parsedRw) ? null : Math.min(200, Math.max(1, parsedRw))
     setBusy(true)
     setMessage(null)
     try {
@@ -221,6 +338,7 @@ export function JobsDashboard() {
           keywords,
           locations,
           selected_portals: pickedPortals,
+          results_wanted,
         })
         setMessage("Search profile updated.")
       } else {
@@ -229,6 +347,7 @@ export function JobsDashboard() {
           keywords,
           locations,
           selected_portals: pickedPortals,
+          results_wanted,
         })
         setSelectedProfileId(created.id)
         fillFromProfile(created)
@@ -395,6 +514,24 @@ export function JobsDashboard() {
                   disabled={busy}
                 />
               </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="sp-max">Max jobs per run</Label>
+                <select
+                  id="sp-max"
+                  data-testid="jobs-results-wanted-select"
+                  className="border-input bg-background focus-visible:ring-ring h-9 w-full rounded-md border px-2 text-sm shadow-xs outline-none focus-visible:ring-2"
+                  value={resultsWantedStr}
+                  onChange={(e) => setResultsWantedStr(e.target.value)}
+                  disabled={busy}
+                >
+                  {RESULTS_WANTED_OPTIONS.map((opt) => (
+                    <option key={opt || "default"} value={opt}>
+                      {opt === "" ? "Server default" : opt}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-muted-foreground text-xs">JobSpy up to 200 listings; Naukri up to 100 per run.</p>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -463,6 +600,7 @@ export function JobsDashboard() {
                   <option value="company">Company</option>
                   <option value="portal">Portal</option>
                   <option value="board_status">Board status</option>
+                  {showMatchColumn ? <option value="match_score">Match score</option> : null}
                 </select>
               </div>
               <div className="space-y-2">
@@ -485,10 +623,39 @@ export function JobsDashboard() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-              <div className="text-muted-foreground text-xs">
-                Showing {filteredSorted.length} row{filteredSorted.length === 1 ? "" : "s"}
-                {filteredSorted.length !== results.length ? ` (of ${results.length} from run)` : ""}
-                {filteredSorted.length > PAGE_SIZE ? ` · Page ${safePage} of ${totalPages}` : ""}
+              <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
+                <span>
+                  Showing {filteredSorted.length} row{filteredSorted.length === 1 ? "" : "s"}
+                  {filteredSorted.length !== results.length ? ` (of ${results.length} from run)` : ""}
+                  {filteredSorted.length > pageSize ? ` · Page ${safePage} of ${totalPages}` : ""}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="jobs-page-size" className="text-muted-foreground whitespace-nowrap text-xs font-normal">
+                    Rows per page
+                  </Label>
+                  <select
+                    id="jobs-page-size"
+                    data-testid="jobs-page-size-select"
+                    className="border-input bg-background h-8 rounded-md border px-2 text-xs shadow-xs"
+                    value={pageSize}
+                    onChange={(e) => {
+                      const n = Number.parseInt(e.target.value, 10)
+                      setPageSize(n)
+                      try {
+                        window.localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(n))
+                      } catch {
+                        /* ignore */
+                      }
+                      setResultsPage(1)
+                    }}
+                  >
+                    {PAGE_SIZE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -542,7 +709,7 @@ export function JobsDashboard() {
               </div>
             </div>
 
-            {filteredSorted.length > PAGE_SIZE ? (
+            {filteredSorted.length > pageSize ? (
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
@@ -574,6 +741,9 @@ export function JobsDashboard() {
                     <th className="p-2.5 text-xs font-semibold tracking-wide">Title</th>
                     <th className="p-2.5 text-xs font-semibold tracking-wide">Company</th>
                     <th className="p-2.5 text-xs font-semibold tracking-wide">Portal</th>
+                    {showMatchColumn ? (
+                      <th className="p-2.5 text-xs font-semibold tracking-wide">Match</th>
+                    ) : null}
                     <th className="p-2.5 text-xs font-semibold tracking-wide">Board</th>
                     <th className="w-28 p-2.5 text-xs font-semibold tracking-wide" />
                   </tr>
@@ -581,7 +751,7 @@ export function JobsDashboard() {
                 <tbody>
                   {!results.length ? (
                     <tr>
-                      <td colSpan={5} className="text-muted-foreground p-8 text-center text-sm">
+                      <td colSpan={resultsTableColSpan} className="text-muted-foreground p-8 text-center text-sm">
                         <div className="mx-auto max-w-sm space-y-1">
                           <p className="text-foreground font-medium">No results yet</p>
                           <p>Save a profile, pick portals, and run a search. Deduped listings and board status appear here.</p>
@@ -590,7 +760,7 @@ export function JobsDashboard() {
                     </tr>
                   ) : !filteredSorted.length ? (
                     <tr>
-                      <td colSpan={5} className="text-muted-foreground p-6 text-center text-sm">
+                      <td colSpan={resultsTableColSpan} className="text-muted-foreground p-6 text-center text-sm">
                         No rows match your filter. Clear the filter to see all results.
                       </td>
                     </tr>
@@ -611,6 +781,15 @@ export function JobsDashboard() {
                         </td>
                         <td className="p-2.5 align-middle">{r.company}</td>
                         <td className="text-muted-foreground p-2.5 align-middle capitalize">{r.portal}</td>
+                        {showMatchColumn ? (
+                          <td className="text-foreground p-2.5 align-middle tabular-nums text-xs font-medium">
+                            {!(r.id in matchScoreRef.current)
+                              ? "…"
+                              : matchScoreRef.current[r.id] === -1
+                                ? "—"
+                                : String(matchScoreRef.current[r.id])}
+                          </td>
+                        ) : null}
                         <td className="p-2.5 align-middle">
                           {r.board_status ? (
                             <span

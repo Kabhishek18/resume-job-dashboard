@@ -26,6 +26,40 @@ def _register_tok() -> str:
     return str(r.json()["access_token"])
 
 
+def test_search_profile_results_wanted_round_trip_and_validation():
+    t = _register_tok()
+    h = {"Authorization": f"Bearer {t}"}
+
+    bad_low = client.post(
+        "/api/jobs/searches",
+        json={"name": "S0", "keywords": "k", "results_wanted": 0},
+        headers=h,
+    )
+    assert bad_low.status_code == 400
+    assert bad_low.json()["error"]["code"] == "VALIDATION"
+
+    bad_high = client.post(
+        "/api/jobs/searches",
+        json={"name": "S1", "keywords": "k", "results_wanted": 201},
+        headers=h,
+    )
+    assert bad_high.status_code == 400
+
+    ok = client.post(
+        "/api/jobs/searches",
+        json={"name": "S2", "keywords": "k", "results_wanted": 75},
+        headers=h,
+    )
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["results_wanted"] == 75
+
+    pid = body["id"]
+    cleared = client.patch(f"/api/jobs/searches/{pid}", json={"results_wanted": None}, headers=h)
+    assert cleared.status_code == 200
+    assert cleared.json().get("results_wanted") in (None,)
+
+
 def test_jobs_api_isolation_between_users():
     t1 = _register_tok()
     t2 = _register_tok()
@@ -83,6 +117,8 @@ def test_run_lifecycle_and_results(mock_collect):
     rows = res.json()
     assert len(rows) >= 1
     assert rows[0]["title"] == "T1"
+    assert "description_snippet" in rows[0]
+    assert rows[0]["description_snippet"] == ""
 
     csv_r = client.get(f"/api/jobs/runs/{run_id}/results.csv", headers=h)
     assert csv_r.status_code == 200

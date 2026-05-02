@@ -17,6 +17,7 @@ def aggregated_jobs_to_csv_rows(rows: Iterable[dict[str, Any]]) -> str:
         "posted_at",
         "salary_text",
         "apply_url",
+        "description_snippet",
         "duplicate_count",
         "board_status",
         "source_count",

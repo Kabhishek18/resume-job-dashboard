@@ -24,6 +24,7 @@ def profile_to_collect_params(profile: JobSearchProfile) -> dict[str, Any]:
         "employment_types": profile.employment_types,
         "remote_only": profile.remote_only,
         "selected_portals": profile.selected_portals or [],
+        "results_wanted": profile.results_wanted,
     }
 
 

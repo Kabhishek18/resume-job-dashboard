@@ -20,6 +20,8 @@ class SearchProfileCreate(BaseModel):
     schedule_frequency: Optional[str] = None  # daily|weekly
     schedule_time: Optional[str] = None  # HH:MM
     schedule_timezone: Optional[str] = "UTC"
+    # Omit for server default (.env JOBSPY_RESULTS_WANTED / NAUKRI_MAX_LISTINGS).
+    results_wanted: Optional[int] = None
 
 
 class SearchProfilePatch(BaseModel):
@@ -34,6 +36,7 @@ class SearchProfilePatch(BaseModel):
     schedule_frequency: Optional[str] = None
     schedule_time: Optional[str] = None
     schedule_timezone: Optional[str] = None
+    results_wanted: Optional[int] = None
 
 
 class SearchProfileApi(BaseModel):
@@ -50,6 +53,7 @@ class SearchProfileApi(BaseModel):
     schedule_frequency: Optional[str]
     schedule_time: Optional[str]
     schedule_timezone: Optional[str]
+    results_wanted: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -75,6 +79,7 @@ class AggregatedJobRowApi(BaseModel):
     posted_at: Optional[str]
     salary_text: str
     apply_url: str
+    description_snippet: str = ""
     duplicate_count: int
     board_status: Optional[str] = None
     source_count: int = 1
