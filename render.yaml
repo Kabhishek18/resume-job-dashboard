@@ -1,0 +1,33 @@
+# Render Blueprint — creates the FastAPI web service (GitHub Pages still deploys separately).
+#
+# Create the service:
+#   1. https://dashboard.render.com → New → Blueprint
+#   2. Connect this repo, branch main, use this file as the blueprint (default path: render.yaml).
+#   3. After the first successful deploy, copy the service URL (https://<name>.onrender.com).
+#   4. Set GitHub → Settings → Actions → Variables → PUBLIC_API_BASE_URL to that URL (no trailing slash).
+#
+# If the name "resume-dashboard-api" is already taken in your workspace, change `name` below
+# and update PUBLIC_API_BASE_URL to match the URL Render assigns.
+
+services:
+  - type: web
+    name: resume-dashboard-api
+    runtime: python
+    plan: free
+    region: oregon
+    branch: main
+    rootDir: backend-ai
+    buildCommand: pip install -r requirements.txt && pip install --no-deps -r requirements-jobspy.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    buildFilter:
+      paths:
+        - backend-ai/**
+      ignoredPaths:
+        - frontend/**
+        - .github/**
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.6"
+      - key: JWT_SECRET
+        generateValue: true
