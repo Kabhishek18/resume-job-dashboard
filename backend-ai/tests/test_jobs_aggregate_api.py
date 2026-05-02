@@ -78,6 +78,133 @@ def test_jobs_api_isolation_between_users():
 
 
 @patch("app.services.jobs.run_service.run_collectors_for_profile")
+def test_run_results_are_isolated_between_users(mock_collect):
+    mock_collect.return_value = (
+        [
+            CollectedRow(
+                title="T1",
+                company="Co",
+                location="L",
+                portal="linkedin",
+                apply_url="https://example.invalid/j/1",
+                source_url="https://li",
+            )
+        ],
+        {"linkedin": PortalRunOutcome(row_count=1, state="ok")},
+        None,
+    )
+
+    t1 = _register_tok()
+    t2 = _register_tok()
+    h1 = {"Authorization": f"Bearer {t1}"}
+    h2 = {"Authorization": f"Bearer {t2}"}
+
+    pr = client.post(
+        "/api/jobs/searches",
+        json={"name": "S1", "keywords": "python", "locations": "Berlin", "selected_portals": ["linkedin"]},
+        headers=h1,
+    )
+    assert pr.status_code == 200
+    pid = pr.json()["id"]
+
+    rr = client.post(f"/api/jobs/searches/{pid}/run", headers=h1)
+    assert rr.status_code == 200
+    run_id = rr.json()["id"]
+
+    own_run = client.get(f"/api/jobs/runs/{run_id}", headers=h1)
+    assert own_run.status_code == 200
+
+    other_run = client.get(f"/api/jobs/runs/{run_id}", headers=h2)
+    assert other_run.status_code == 404
+
+    own_results = client.get(f"/api/jobs/runs/{run_id}/results", headers=h1)
+    assert own_results.status_code == 200
+    assert len(own_results.json()) == 1
+
+    other_results = client.get(f"/api/jobs/runs/{run_id}/results", headers=h2)
+    assert other_results.status_code == 404
+
+    own_csv = client.get(f"/api/jobs/runs/{run_id}/results.csv", headers=h1)
+    assert own_csv.status_code == 200
+
+    other_csv = client.get(f"/api/jobs/runs/{run_id}/results.csv", headers=h2)
+    assert other_csv.status_code == 404
+
+
+@patch("app.services.jobs.run_service.run_collectors_for_profile")
+def test_board_and_dashboard_are_isolated_between_users(mock_collect):
+    mock_collect.return_value = (
+        [
+            CollectedRow(
+                title="T1",
+                company="Co",
+                location="L",
+                portal="linkedin",
+                apply_url="https://example.invalid/j/1",
+                source_url="https://li",
+            )
+        ],
+        {"linkedin": PortalRunOutcome(row_count=1, state="ok")},
+        None,
+    )
+
+    t1 = _register_tok()
+    t2 = _register_tok()
+    h1 = {"Authorization": f"Bearer {t1}"}
+    h2 = {"Authorization": f"Bearer {t2}"}
+
+    pr = client.post(
+        "/api/jobs/searches",
+        json={"name": "S1", "keywords": "python", "locations": "Berlin", "selected_portals": ["linkedin"]},
+        headers=h1,
+    )
+    assert pr.status_code == 200
+
+    rr = client.post(f"/api/jobs/searches/{pr.json()['id']}/run", headers=h1)
+    assert rr.status_code == 200
+
+    res = client.get(f"/api/jobs/runs/{rr.json()['id']}/results", headers=h1)
+    assert res.status_code == 200
+    job_id = res.json()[0]["id"]
+
+    board = client.post("/api/jobs/board", json={"job_id": job_id}, headers=h1)
+    assert board.status_code == 200
+    entry_id = board.json()["id"]
+
+    other_board_add = client.post("/api/jobs/board", json={"job_id": job_id}, headers=h2)
+    assert other_board_add.status_code == 404
+
+    other_board_patch = client.patch(
+        f"/api/jobs/board/{entry_id}",
+        json={"status": "applied", "notes": "not yours"},
+        headers=h2,
+    )
+    assert other_board_patch.status_code == 404
+
+    other_board_delete = client.delete(f"/api/jobs/board/{entry_id}", headers=h2)
+    assert other_board_delete.status_code == 404
+
+    own_board = client.get("/api/jobs/board", headers=h1)
+    assert own_board.status_code == 200
+    assert len(own_board.json()) == 1
+
+    other_board = client.get("/api/jobs/board", headers=h2)
+    assert other_board.status_code == 200
+    assert other_board.json() == []
+
+    own_dashboard = client.get("/api/dashboard/summary", headers=h1)
+    assert own_dashboard.status_code == 200
+    assert own_dashboard.json()["total_tracked_jobs"] == 1
+
+    other_dashboard = client.get("/api/dashboard/summary", headers=h2)
+    assert other_dashboard.status_code == 200
+    other_body = other_dashboard.json()
+    assert other_body["total_tracked_jobs"] == 0
+    assert other_body["recent_board_entries"] == []
+    assert other_body["most_recent_run"] is None
+
+
+@patch("app.services.jobs.run_service.run_collectors_for_profile")
 def test_run_lifecycle_and_results(mock_collect):
     mock_collect.return_value = (
         [
