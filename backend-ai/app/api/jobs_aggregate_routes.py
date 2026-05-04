@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -193,6 +194,43 @@ def _require_run_owned(db: Session, user_id: int, rid: int) -> JobSearchRun:
     return run
 
 
+def _aggregated_jobs_for_run(db: Session, user_id: int, run: JobSearchRun) -> list[AggregatedJob]:
+    return (
+        db.query(AggregatedJob)
+        .join(JobSource, JobSource.job_id == AggregatedJob.id)
+        .filter(JobSource.run_id == run.id, AggregatedJob.user_id == user_id)
+        .distinct()
+        .all()
+    )
+
+
+def _board_entries_by_job_id(
+    db: Session, user_id: int, job_ids: list[int]
+) -> dict[int, JobBoardEntry]:
+    if not job_ids:
+        return {}
+    rows = (
+        db.query(JobBoardEntry)
+        .filter(JobBoardEntry.user_id == user_id, JobBoardEntry.job_id.in_(job_ids))
+        .all()
+    )
+    return {e.job_id: e for e in rows}
+
+
+def _source_counts_for_run(
+    db: Session, run_id: int, job_ids: list[int]
+) -> dict[int, int]:
+    if not job_ids:
+        return {}
+    q = (
+        db.query(JobSource.job_id, func.count(JobSource.id))
+        .filter(JobSource.run_id == run_id, JobSource.job_id.in_(job_ids))
+        .group_by(JobSource.job_id)
+        .all()
+    )
+    return {int(jid): int(cnt) for jid, cnt in q}
+
+
 @router.get("/runs/{run_id}", response_model=JobSearchRunApi)
 def get_run(
     run_id: int,
@@ -210,26 +248,15 @@ def run_results(
 ) -> list[AggregatedJobRowApi]:
     run = _require_run_owned(db, user.id, run_id)
 
-    rows = (
-        db.query(AggregatedJob)
-        .join(JobSource, JobSource.job_id == AggregatedJob.id)
-        .filter(JobSource.run_id == run.id, AggregatedJob.user_id == user.id)
-        .distinct()
-        .all()
-    )
+    rows = _aggregated_jobs_for_run(db, user.id, run)
+    job_ids = [j.id for j in rows]
+    board_by_job = _board_entries_by_job_id(db, user.id, job_ids)
+    src_counts = _source_counts_for_run(db, run.id, job_ids)
 
     out: list[AggregatedJobRowApi] = []
     for job in rows:
-        board_row = (
-            db.query(JobBoardEntry)
-            .filter(JobBoardEntry.user_id == user.id, JobBoardEntry.job_id == job.id)
-            .first()
-        )
-        src_count = (
-            db.query(JobSource)
-            .filter(JobSource.job_id == job.id, JobSource.run_id == run.id)
-            .count()
-        )
+        board_row = board_by_job.get(job.id)
+        src_count = src_counts.get(job.id, 0)
         out.append(
             AggregatedJobRowApi(
                 id=job.id,
@@ -260,26 +287,15 @@ def run_results_csv(
 
     run = _require_run_owned(db, user.id, run_id)
 
-    rows = (
-        db.query(AggregatedJob)
-        .join(JobSource, JobSource.job_id == AggregatedJob.id)
-        .filter(JobSource.run_id == run.id, AggregatedJob.user_id == user.id)
-        .distinct()
-        .all()
-    )
+    rows = _aggregated_jobs_for_run(db, user.id, run)
+    job_ids = [j.id for j in rows]
+    board_by_job = _board_entries_by_job_id(db, user.id, job_ids)
+    src_counts = _source_counts_for_run(db, run.id, job_ids)
 
     payloads: list[dict] = []
     for job in rows:
-        board_row = (
-            db.query(JobBoardEntry)
-            .filter(JobBoardEntry.user_id == user.id, JobBoardEntry.job_id == job.id)
-            .first()
-        )
-        src_count = (
-            db.query(JobSource)
-            .filter(JobSource.job_id == job.id, JobSource.run_id == run.id)
-            .count()
-        )
+        board_row = board_by_job.get(job.id)
+        src_count = src_counts.get(job.id, 0)
         payloads.append(
             {
                 "id": job.id,

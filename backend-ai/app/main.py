@@ -11,6 +11,10 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.core.middleware import RequestLoggingMiddleware
 
+_CORS_SEGMENT_GITHUB_IO = r"https://[a-zA-Z0-9-]+\.github\.io"
+# Development: browsers send Origin like http://192.168.x.x:3000 for LAN Next dev servers.
+_CORS_SEGMENT_DEV_HTTP = r"http://[0-9a-zA-Z.-]+:[0-9]+"
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -21,18 +25,21 @@ async def lifespan(_app: FastAPI):
 
     Path("data").mkdir(parents=True, exist_ok=True)
 
-    alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
-    cfg = Config(str(alembic_ini))
-    cfg.set_main_option("sqlalchemy.url", settings.database_url)
-    command.upgrade(cfg, "head")
+    if settings.run_migrations_on_startup:
+        alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
+        cfg = Config(str(alembic_ini))
+        cfg.set_main_option("sqlalchemy.url", settings.database_url)
+        command.upgrade(cfg, "head")
 
     from app.services.jobs.job_scheduler import shutdown_scheduler, start_scheduler
 
-    start_scheduler()
+    if settings.enable_job_scheduler:
+        start_scheduler()
     try:
         yield
     finally:
-        shutdown_scheduler()
+        if settings.enable_job_scheduler:
+            shutdown_scheduler()
 
 
 logging.basicConfig(
@@ -53,11 +60,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_allow_origin_regex = (
+    rf"({_CORS_SEGMENT_GITHUB_IO}|{_CORS_SEGMENT_DEV_HTTP})$"
+    if settings.app_env == "development"
+    else rf"{_CORS_SEGMENT_GITHUB_IO}$"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    # GitHub Pages always sends Origin: https://<user>.github.io (no repo path). Matches all user pages sites.
-    allow_origin_regex=r"https://[a-zA-Z0-9-]+\.github\.io$",
+    # GitHub Pages + LAN http dev (when APP_ENV=development).
+    allow_origin_regex=_allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -83,7 +96,7 @@ async def validation_handler(_request: Request, exc: RequestValidationError) -> 
     msg = first.get("msg", "Validation error")
     loc_suffix = f" {'/'.join(str(x) for x in loc)}" if loc else ""
     message = f"{msg}{loc_suffix}"
-    body = {"error": {"code": "VALIDATION_ERROR", "message": message, "details": errors}}
+    body = {"error": {"code": "VALIDATION_ERROR", "message": message}}
     return JSONResponse(status_code=400, content=body)
 
 

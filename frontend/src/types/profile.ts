@@ -7,3 +7,7 @@ export type ProfileApiV1 = {
   resume_text: string | null
   resume_updated_at: string | null
 }
+
+export type UpdateProfileNameBody = {
+  name: string
+}

@@ -9,3 +9,18 @@ export type TokenResponse = {
   token_type: string
   user: AuthUser
 }
+
+export type ForgotPasswordApiV1 = {
+  version: "v1"
+  message: string
+}
+
+export type ResetPasswordApiV1 = {
+  version: "v1"
+  message: string
+}
+
+export type ChangePasswordApiV1 = {
+  version: "v1"
+  message: string
+}

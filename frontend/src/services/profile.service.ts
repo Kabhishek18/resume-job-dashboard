@@ -1,10 +1,19 @@
 import { apiFetch } from "@/lib/api"
-import type { ProfileApiV1 } from "@/types/profile"
+import type { ProfileApiV1, UpdateProfileNameBody } from "@/types/profile"
 
 export async function getProfile(token: string): Promise<ProfileApiV1> {
   return apiFetch<ProfileApiV1>("/api/profile", {
     headers: { "Content-Type": "application/json" },
     token,
+  })
+}
+
+export async function patchProfileName(token: string, body: UpdateProfileNameBody): Promise<ProfileApiV1> {
+  return apiFetch<ProfileApiV1>("/api/profile", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    token,
+    body: JSON.stringify(body),
   })
 }
 

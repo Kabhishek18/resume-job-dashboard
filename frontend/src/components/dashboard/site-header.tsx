@@ -1,10 +1,12 @@
 "use client"
 
-import { LogOut, Settings, User } from "lucide-react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { LogOut, Settings, User } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import { cn } from "@/lib/utils"
 import { useAuthStore } from "@/store/useAuthStore"
 
 export function SiteHeader() {
@@ -25,9 +27,13 @@ export function SiteHeader() {
           <User className="size-4 shrink-0" />
           <span className="hidden sm:inline">{user?.name ?? "Profile"}</span>
         </Button>
-        <Button variant="ghost" size="icon-sm" type="button" aria-label="Settings">
+        <Link
+          href="/settings"
+          aria-label="Settings"
+          className={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }))}
+        >
           <Settings className="size-4" />
-        </Button>
+        </Link>
         <Button
           variant="ghost"
           size="icon-sm"

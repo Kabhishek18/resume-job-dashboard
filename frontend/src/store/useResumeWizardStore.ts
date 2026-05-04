@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
+import { LEGACY_RESUME_WIZARD_STORAGE_KEY } from "@/store/resumeWizardStorageConstants"
 import type { JobDescriptionInput } from "@/types/job"
 import type { MatchPayload } from "@/types/match"
 import type { TailorApiV1 } from "@/types/tailor"
@@ -319,7 +320,7 @@ export const useResumeWizardStore = create<WizardState & WizardActions>()(
         })),
     }),
     {
-      name: "resume-wizard-storage",
+      name: LEGACY_RESUME_WIZARD_STORAGE_KEY,
       version: PERSIST_VERSION,
       merge: (persistedState, currentState) => ({
         ...currentState,

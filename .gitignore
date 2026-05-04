@@ -3,7 +3,10 @@ backend-ai/data/
 __pycache__/
 *.py[cod]
 .venv/
+.venv-ci/
 venv/
+# Optional local tunnel config (if you use external tunnel tools)
+ngrok.yml
 .env
 
 # Node / Next

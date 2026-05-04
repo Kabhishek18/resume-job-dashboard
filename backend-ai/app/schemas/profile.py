@@ -13,5 +13,9 @@ class ProfileApiV1(BaseModel):
     resume_updated_at: Optional[datetime] = None
 
 
+class UpdateProfileNameBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+
 class UpdateResumeBody(BaseModel):
     resume_text: str = Field(..., min_length=1, max_length=500_000)

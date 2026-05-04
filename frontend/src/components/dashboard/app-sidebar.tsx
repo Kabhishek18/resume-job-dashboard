@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Briefcase, FileText, LayoutDashboard } from "lucide-react"
+import { Briefcase, FileText, LayoutDashboard, Settings } from "lucide-react"
 
 import {
   Sidebar,
@@ -21,6 +21,7 @@ const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/jobs", label: "Jobs", icon: Briefcase },
   { href: "/resume", label: "Resume", icon: FileText },
+  { href: "/settings", label: "Settings", icon: Settings },
 ] as const
 
 function isNavActive(pathname: string, href: string) {

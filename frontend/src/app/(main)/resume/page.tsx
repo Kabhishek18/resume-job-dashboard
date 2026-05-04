@@ -1,5 +1,5 @@
 import { DashboardShell } from "@/components/dashboard/dashboard-shell"
-import { ResumeWizard } from "@/components/resume/resume-wizard"
+import { ResumeWizardGate } from "@/components/resume/resume-wizard-gate"
 
 export default function ResumePage() {
   return (
@@ -11,7 +11,7 @@ export default function ResumePage() {
         </p>
       </div>
       <div className="mt-8">
-        <ResumeWizard />
+        <ResumeWizardGate />
       </div>
     </DashboardShell>
   )

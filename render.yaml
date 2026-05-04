@@ -5,6 +5,7 @@
 #   2. Connect this repo, branch main, use this file as the blueprint (default path: render.yaml).
 #   3. After the first successful deploy, copy the service URL (https://<name>.onrender.com).
 #   4. Set GitHub → Settings → Actions → Variables → PUBLIC_API_BASE_URL to that URL (no trailing slash).
+#   5. On the Render API service, set FRONTEND_BASE_URL / APP_PUBLIC_ORIGIN to your frontend origin (password-reset email links).
 #
 # If the name "resume-dashboard-api" is already taken in your workspace, change `name` below
 # and update PUBLIC_API_BASE_URL to match the URL Render assigns.

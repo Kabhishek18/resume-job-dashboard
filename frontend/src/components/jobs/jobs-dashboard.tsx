@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
+import { Trash2 } from "lucide-react"
+
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -15,6 +17,7 @@ import { getProfile } from "@/services/profile.service"
 import {
   addJobToBoard,
   createSearchProfile,
+  deleteBoardEntry,
   getRun,
   getRunResults,
   listBoard,
@@ -122,6 +125,7 @@ export function JobsDashboard() {
   const [pageSize, setPageSize] = useState(() => readStoredPageSize())
 
   const [boardEntries, setBoardEntries] = useState<BoardEntryApi[]>([])
+  const [boardEntryDeletingId, setBoardEntryDeletingId] = useState<number | null>(null)
 
   const [savedResumeText, setSavedResumeText] = useState<string | null>(null)
   /** Completed scores only (-1 = error). Missing key = still loading. */
@@ -444,6 +448,29 @@ export function JobsDashboard() {
       }
     } catch (e) {
       setMessage(e instanceof ApiError ? e.message : "Board update failed.")
+    }
+  }
+
+  const removeBoardRow = async (entryId: number, jobId: number, title: string) => {
+    if (!token) return
+    const label = title.trim() || "this job"
+    const confirmed =
+      typeof window === "undefined" ||
+      window.confirm(
+        `Remove “${label.slice(0, 80)}${label.length > 80 ? "…" : ""}” from your board? You can track it again from Results.`,
+      )
+    if (!confirmed) return
+    setMessage(null)
+    setBoardEntryDeletingId(entryId)
+    try {
+      await deleteBoardEntry(token, entryId)
+      setBoardEntries((prev) => prev.filter((e) => e.id !== entryId))
+      setResults((prev) => prev.map((r) => (r.id === jobId ? { ...r, board_status: null } : r)))
+      setMessage("Removed from board.")
+    } catch (e) {
+      setMessage(e instanceof ApiError ? e.message : "Could not remove from board.")
+    } finally {
+      setBoardEntryDeletingId(null)
     }
   }
 
@@ -869,7 +896,8 @@ export function JobsDashboard() {
           <CardHeader className="border-b pb-4">
             <CardTitle className="text-lg">Application board</CardTitle>
             <CardDescription>
-              Track applications from Results. Status chips update live; edits sync back to the Results tab.
+              Track applications from Results. Status chips update live; edits sync back to the Results tab. Use{" "}
+              <strong>Remove</strong> to delete a saved job from your board (listings stay in Results).
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
@@ -883,8 +911,9 @@ export function JobsDashboard() {
                   <BoardCard
                     key={`${row.id}-${row.updated_at ?? ""}`}
                     row={row}
-                    disabled={busy}
+                    disabled={busy || boardEntryDeletingId === row.id}
                     onPatch={patchBoardRow}
+                    onRemove={removeBoardRow}
                   />
                 ))
               )}
@@ -900,12 +929,13 @@ export function JobsDashboard() {
                     <th className="p-2.5 text-xs font-semibold tracking-wide">Recruiter</th>
                     <th className="p-2.5 text-xs font-semibold tracking-wide">Notes</th>
                     <th className="p-2.5 text-xs font-semibold tracking-wide">Updated</th>
+                    <th className="p-2.5 text-right text-xs font-semibold tracking-wide">Remove</th>
                   </tr>
                 </thead>
                 <tbody>
                   {boardEntries.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-muted-foreground p-8 text-center text-sm">
+                      <td colSpan={8} className="text-muted-foreground p-8 text-center text-sm">
                         Nothing on the board yet — use Track in Results after a search.
                       </td>
                     </tr>
@@ -914,8 +944,9 @@ export function JobsDashboard() {
                       <BoardRowEditable
                         key={`${row.id}-${row.updated_at ?? ""}`}
                         row={row}
-                        disabled={busy}
+                        disabled={busy || boardEntryDeletingId === row.id}
                         onPatch={patchBoardRow}
+                        onRemove={removeBoardRow}
                       />
                     ))
                   )}
@@ -933,10 +964,12 @@ function BoardRowEditable({
   row,
   disabled,
   onPatch,
+  onRemove,
 }: {
   row: BoardEntryApi
   disabled: boolean
   onPatch: (entryId: number, jobId: number, body: BoardEntryPatchBody) => void
+  onRemove: (entryId: number, jobId: number, title: string) => void | Promise<void>
 }) {
   const statuses = Array.from(new Set([row.status, ...BOARD_STATUSES]))
   const updated = row.updated_at ? new Date(row.updated_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—"
@@ -1018,6 +1051,20 @@ function BoardRowEditable({
         />
       </td>
       <td className="text-muted-foreground whitespace-nowrap p-2.5 text-xs">{updated}</td>
+      <td className="p-2.5 align-middle">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="text-destructive hover:bg-destructive/10 h-8 gap-1 px-2"
+          disabled={disabled}
+          aria-label={`Remove ${row.title} from board`}
+          onClick={() => void onRemove(row.id, row.job_id, row.title)}
+        >
+          <Trash2 className="size-3.5 shrink-0" aria-hidden />
+          <span className="hidden sm:inline">Remove</span>
+        </Button>
+      </td>
     </tr>
   )
 }
@@ -1026,10 +1073,12 @@ function BoardCard({
   row,
   disabled,
   onPatch,
+  onRemove,
 }: {
   row: BoardEntryApi
   disabled: boolean
   onPatch: (entryId: number, jobId: number, body: BoardEntryPatchBody) => void
+  onRemove: (entryId: number, jobId: number, title: string) => void | Promise<void>
 }) {
   const statuses = Array.from(new Set([row.status, ...BOARD_STATUSES]))
   const updated = row.updated_at ? new Date(row.updated_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—"
@@ -1094,6 +1143,18 @@ function BoardCard({
           />
         </div>
         <p className="text-muted-foreground text-xs">Updated {updated}</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="text-destructive hover:bg-destructive/10 w-full gap-1.5 sm:w-auto"
+          disabled={disabled}
+          aria-label={`Remove ${row.title} from board`}
+          onClick={() => void onRemove(row.id, row.job_id, row.title)}
+        >
+          <Trash2 className="size-3.5 shrink-0" aria-hidden />
+          Remove from board
+        </Button>
       </CardContent>
     </Card>
   )

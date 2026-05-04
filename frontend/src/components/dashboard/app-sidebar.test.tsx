@@ -21,5 +21,7 @@ describe("AppSidebar", () => {
     expect(screen.queryByText("Home")).toBeNull()
     expect(screen.getByText("Dashboard")).toBeTruthy()
     expect(screen.getByText("Jobs")).toBeTruthy()
+    expect(screen.getByText("Resume")).toBeTruthy()
+    expect(screen.getByText("Settings")).toBeTruthy()
   })
 })

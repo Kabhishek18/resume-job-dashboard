@@ -7,14 +7,18 @@ import { StepOneMatchCard } from "@/components/resume/step-one-match"
 import { StepTwoTailorCard } from "@/components/resume/step-two-tailor"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getProfile } from "@/services/profile.service"
+import { useAuthStore } from "@/store/useAuthStore"
+import { purgeLegacyResumeWizardStorageOnce } from "@/store/resume-wizard-persistence"
+import { resumeWizardPersistStorageName } from "@/store/resumeWizardStorageConstants"
 import {
   isStep2UnlockedFromState,
+  resetResumeWizardStore,
   useResumeWizardStore,
 } from "@/store/useResumeWizardStore"
-import { useAuthStore } from "@/store/useAuthStore"
 
 export function ResumeWizard() {
   const token = useAuthStore((s) => s.token)
+  const userId = useAuthStore((s) => s.user?.id)
   const currentStep = useResumeWizardStore((s) => s.currentStep)
   const setStep = useResumeWizardStore((s) => s.setCurrentStep)
   const setSavedFromServer = useResumeWizardStore((s) => s.setSavedResumeFromServer)
@@ -23,10 +27,16 @@ export function ResumeWizard() {
   const [wizReady, setWizReady] = useState(false)
 
   useEffect(() => {
+    if (userId == null) return undefined
+    purgeLegacyResumeWizardStorageOnce()
+    useResumeWizardStore.persist.setOptions({
+      name: resumeWizardPersistStorageName(userId),
+    })
+    resetResumeWizardStore()
     const unsub = useResumeWizardStore.persist.onFinishHydration(() => setWizReady(true))
     void useResumeWizardStore.persist.rehydrate()
     return unsub
-  }, [])
+  }, [userId])
 
   useEffect(() => {
     if (!wizReady || !token) return

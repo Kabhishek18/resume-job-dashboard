@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useMatch } from "@/hooks/useMatch"
-import { ApiError } from "@/lib/api"
+import { ApiError, resolveApiBase } from "@/lib/api"
 import { buildStep1ResultViewModel, type Step1TabId } from "@/lib/match-verdict-ui"
 import { cn } from "@/lib/utils"
 import { postExtractResumeFile } from "@/services/resume-extract.service"
@@ -32,10 +32,7 @@ const RESUME_UPLOAD_ACCEPT =
   ".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
 
 function apiBaseHint(): string {
-  return (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(
-    /\/$/,
-    "",
-  )
+  return resolveApiBase()
 }
 
 function ImportHealthBadge({ mode }: { mode: ImportPreviewMode | null }) {

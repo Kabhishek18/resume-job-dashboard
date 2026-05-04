@@ -2,12 +2,30 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.core.security import create_access_token, hash_password, verify_password
 from app.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserPublic
+from app.schemas.auth import (
+    ChangePasswordApiV1,
+    ChangePasswordBody,
+    ForgotPasswordApiV1,
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    ResetPasswordApiV1,
+    ResetPasswordBody,
+    TokenResponse,
+    UserPublic,
+)
+from app.services.password_reset import (
+    FORGOT_PASSWORD_PUBLIC_MESSAGE_V1,
+    complete_password_reset,
+    change_password_logged_in,
+    issue_password_reset_email,
+)
 
 router = APIRouter(tags=["auth"])
 
@@ -52,3 +70,44 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
 @router.get("/me", response_model=UserPublic)
 def me(current: User = Depends(get_current_user)) -> UserPublic:
     return _user_public(current)
+
+
+@router.post("/change-password", response_model=ChangePasswordApiV1)
+def change_password_route(
+    body: ChangePasswordBody,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> ChangePasswordApiV1:
+    change_password_logged_in(
+        db=db,
+        user=current,
+        current_password=body.current_password,
+        new_password=body.new_password,
+    )
+    return ChangePasswordApiV1(
+        version="v1",
+        message="Your password has been updated. Sign in again on other devices if needed.",
+    )
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordApiV1)
+def forgot_password_route(body: ForgotPasswordRequest, db: Session = Depends(get_db)) -> ForgotPasswordApiV1:
+    norm = body.email.strip().lower()
+    user = db.scalar(select(User).where(User.email == norm))
+    if user is not None:
+        issue_password_reset_email(db=db, user=user, settings=settings)
+    return ForgotPasswordApiV1(version="v1", message=FORGOT_PASSWORD_PUBLIC_MESSAGE_V1)
+
+
+@router.post("/reset-password", response_model=ResetPasswordApiV1)
+def reset_password_route(body: ResetPasswordBody, db: Session = Depends(get_db)) -> ResetPasswordApiV1:
+    complete_password_reset(
+        db=db,
+        raw_token=body.token,
+        new_password=body.new_password,
+        settings=settings,
+    )
+    return ResetPasswordApiV1(
+        version="v1",
+        message="Your password has been updated. Sign in with your new password.",
+    )

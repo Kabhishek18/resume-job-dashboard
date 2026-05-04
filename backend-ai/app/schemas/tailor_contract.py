@@ -26,6 +26,14 @@ class TailoredResumeOut(BaseModel):
     bullets: List[str]
 
 
+class TailorStructuredContent(BaseModel):
+    """LLM JSON payload only; server sets TailorApiV1.version and provider_mode."""
+
+    review: TailorReview
+    tailored_resume: TailoredResumeOut
+    cover_letter: Optional[str] = None
+
+
 class TailorApiV1(BaseModel):
     version: Literal["v1"] = "v1"
     provider_mode: Literal["stub", "llm"]

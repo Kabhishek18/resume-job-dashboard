@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.core.config import settings
 from app.services.jobs.run_service import run_job_search_task
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,9 @@ def reschedule_all_profiles() -> None:
 
 def start_scheduler() -> None:
     global _scheduler
+    if not settings.enable_job_scheduler:
+        logger.info("job scheduler disabled (ENABLE_JOB_SCHEDULER=false)")
+        return
     if is_scheduler_disabled():
         logger.info("job scheduler disabled (JOBS_SCHEDULER_DISABLED)")
         return

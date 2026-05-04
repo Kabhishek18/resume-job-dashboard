@@ -98,3 +98,11 @@ export async function patchBoardEntry(
     body: JSON.stringify(body),
   })
 }
+
+export async function deleteBoardEntry(token: string, entryId: number): Promise<{ ok: string }> {
+  return apiFetch<{ ok: string }>(`/api/jobs/board/${entryId}`, {
+    method: "DELETE",
+    headers: jsonHeaders,
+    token,
+  })
+}

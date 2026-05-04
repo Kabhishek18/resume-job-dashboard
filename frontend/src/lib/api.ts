@@ -17,12 +17,49 @@ function sessionExpiredThrow(): never {
   throw new ApiError("SESSION_EXPIRED", "Your session has expired. Please sign in again.")
 }
 
-function apiBase(): string {
-  const base =
+function trimSlash(s: string) {
+  return s.replace(/\/$/, "")
+}
+
+/** True when NEXT_PUBLIC_* points only at loopback — useless from another device / LAN hostname. */
+function isLoopbackApiUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.hostname === "localhost" || u.hostname === "127.0.0.1"
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Resolved API origin: env wins unless the app is opened on a LAN hostname while env still says localhost,
+ * so login/API work from phones and other PCs without editing .env per IP.
+ */
+export function resolveApiBase(): string {
+  const fromEnvRaw = (
     process.env.NEXT_PUBLIC_API_BASE ||
     process.env.NEXT_PUBLIC_API_URL ||
-    "http://localhost:8000"
-  return base.replace(/\/$/, "")
+    ""
+  ).trim()
+  const fromEnv = fromEnvRaw ? trimSlash(fromEnvRaw) : ""
+
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location
+
+    const viewedFromLanOrigin = hostname !== "localhost" && hostname !== "127.0.0.1"
+    if (viewedFromLanOrigin && (!fromEnv || isLoopbackApiUrl(fromEnv))) {
+      return trimSlash(`${protocol}//${hostname}:8000`)
+    }
+    if (fromEnv) return fromEnv
+    return trimSlash(`${protocol}//${hostname}:8000`)
+  }
+
+  if (fromEnv) return fromEnv
+  return "http://localhost:8000"
+}
+
+function apiBase(): string {
+  return resolveApiBase()
 }
 
 function isLikelyNetworkFailure(e: unknown): boolean {

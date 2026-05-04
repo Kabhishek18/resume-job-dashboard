@@ -19,6 +19,7 @@ export default function LoginForm() {
   const setAuth = useAuthStore((s) => s.setAuth)
 
   const sessionExpired = searchParams.get("expired") === "1"
+  const passwordReset = searchParams.get("reset") === "1"
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -50,6 +51,11 @@ export default function LoginForm() {
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
+          {passwordReset ? (
+            <p className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-950 dark:text-emerald-100">
+              Password updated. Sign in again with your new password.
+            </p>
+          ) : null}
           {sessionExpired ? (
             <p className="border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100 rounded-md border px-3 py-2 text-sm">
               Session expired. Please sign in again.
@@ -81,6 +87,11 @@ export default function LoginForm() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Signing in…" : "Sign in"}
           </Button>
+          <p className="text-muted-foreground text-center text-sm">
+            <Link href="/forgot-password" className="text-foreground underline-offset-4 hover:underline">
+              Forgot password?
+            </Link>
+          </p>
           <p className="text-muted-foreground text-center text-sm">
             No account?{" "}
             <Link href="/signup" className="text-foreground underline-offset-4 hover:underline">
