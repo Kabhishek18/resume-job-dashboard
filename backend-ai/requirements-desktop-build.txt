@@ -1,0 +1,2 @@
+# Optional: PyInstaller backend bundle for Electron desktop (install in same env as backend-ai requirements).
+pyinstaller>=6.0

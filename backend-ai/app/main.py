@@ -18,16 +18,28 @@ _CORS_SEGMENT_DEV_HTTP = r"http://[0-9a-zA-Z.-]+:[0-9]+"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    import os
+    import sys
     from pathlib import Path
 
     from alembic import command
     from alembic.config import Config
 
-    Path("data").mkdir(parents=True, exist_ok=True)
+    work_root = (os.environ.get("JOB_RESUME_WORK_DIR") or "").strip()
+    if work_root:
+        (Path(work_root) / "data").mkdir(parents=True, exist_ok=True)
+    else:
+        Path("data").mkdir(parents=True, exist_ok=True)
 
     if settings.run_migrations_on_startup:
-        alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
-        cfg = Config(str(alembic_ini))
+        if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+            meipass = Path(sys._MEIPASS)
+            alembic_ini = meipass / "alembic.ini"
+            cfg = Config(str(alembic_ini))
+            cfg.set_main_option("script_location", str(meipass / "alembic"))
+        else:
+            alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
+            cfg = Config(str(alembic_ini))
         cfg.set_main_option("sqlalchemy.url", settings.database_url)
         command.upgrade(cfg, "head")
 
@@ -60,9 +72,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_use_loopback_cors = settings.app_env == "development" or settings.job_resume_desktop
 _allow_origin_regex = (
     rf"({_CORS_SEGMENT_GITHUB_IO}|{_CORS_SEGMENT_DEV_HTTP})$"
-    if settings.app_env == "development"
+    if _use_loopback_cors
     else rf"{_CORS_SEGMENT_GITHUB_IO}$"
 )
 

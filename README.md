@@ -16,6 +16,7 @@ A full-stack MVP for scoring and tailoring resumes against job descriptions, run
 - [API overview](#api-overview)
 - [Testing](#testing)
 - [Deployment](#deployment)
+- [Desktop packaging (Electron)](#desktop-packaging-electron)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -52,6 +53,7 @@ A full-stack MVP for scoring and tailoring resumes against job descriptions, run
 | [`backend-ai/`](backend-ai/) | FastAPI app, Alembic migrations, job collectors (JobSpy, Naukri, etc.). |
 | [`frontend/`](frontend/) | Next.js App Router, Tailwind, shadcn-style UI; static-export friendly for GitHub Pages. |
 | [`start.sh`](start.sh) | Local dev: conda Python 3.11 env, uvicorn `:8000`, `next dev` `:3000`. |
+| [`desktop/`](desktop/) | Electron desktop shell: bundles PyInstaller backend + Next static UI (DMG / Windows installer); see below. |
 | [`render.yaml`](render.yaml) | Blueprint for hosting the API (e.g. Render). Frontend is deployed separately (Pages). |
 
 ---
@@ -210,6 +212,58 @@ Typical split:
 2. **Backend:** Host FastAPI separately (example blueprint: **[`render.yaml`](render.yaml)**). Paste the deployed API URL into **`PUBLIC_API_BASE_URL`** so the Pages build bundles the correct `NEXT_PUBLIC_API_BASE`.
 
 Ensure API **CORS** allows your Pages origin (`CORS_ORIGINS` and/or existing GitHub Pages regex in the backend). Configure **`FRONTEND_BASE_URL`** on the API for reset-email links.
+
+---
+
+## Desktop packaging (Electron)
+
+A single downloadable app (**macOS DMG** / **Windows NSIS + portable**) runs the FastAPI stack on loopback (`127.0.0.1:8000`) and serves the **static-exported** Next UI on `127.0.0.1:14208`. The Electron process spawns the backend and shuts it down on quit; the SQLite DB and generated **`JWT_SECRET`** live under Electron **`userData`**.
+
+### Prerequisites
+
+- **Node.js 18+**
+- Same **Python** environment you use for the backend (recommended: conda env **`job-resume-backend`** as in `./start.sh`) with [`backend-ai/requirements.txt`](backend-ai/requirements.txt), [`requirements-jobspy.txt`](backend-ai/requirements-jobspy.txt), and **`pip install -r requirements-desktop-build.txt`** (includes PyInstaller).
+
+### Commands (from repo root implied via `cd` in scripts)
+
+From [`desktop/package.json`](desktop/package.json):
+
+1. **`npm run build:frontend`** — `STATIC_EXPORT=true` + `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000`; output `frontend/out/`.
+2. **`npm run build:backend`** — `rm -rf` then `PyInstaller --distpath dist --workpath build`; output **`backend-ai/dist/job-resume-api/`** (executable + `_internal/`).
+3. **`npm run dist`** — full Electron build (both OS targets supported by electron-builder config when run on each host).
+
+Typical flows:
+
+```bash
+cd desktop
+npm install
+npm run dist:mac      # on macOS — artifacts under desktop/dist-electron/
+npm run dist:win      # on Windows
+```
+
+Unpack-only smoke check (`.app` folder, no installer):
+
+```bash
+cd desktop && npm run pack
+```
+
+Fast iteration against a local conda backend (no packaged Python):
+
+```bash
+cd desktop && npm run dev
+```
+
+(This uses Electron **`--dev`** to run `python -m uvicorn` from `backend-ai`; set **`JOB_RESUME_PYTHON`** if `python` is not on PATH on Windows.)
+
+### CI
+
+Workflow **[`.github/workflows/desktop-artifacts.yml`](.github/workflows/desktop-artifacts.yml)** builds **macOS** and **Windows** installers on **`workflow_dispatch`** or tags **`desktop-v*`**, and uploads build artifacts.
+
+### Notes
+
+- First cold start after install can take **about a minute** while heavy imports (embedding / NLP stacks) load; the shell waits accordingly.
+- Install size is **large** (hundreds of MB to roughly 1 GB+) because of PyTorch/spaCy and related wheels.
+- This is distribution and UX tooling, not concealment—bundled code remains inspectable.
 
 ---
 
