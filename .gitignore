@@ -16,3 +16,12 @@ frontend/out/
 
 # OS
 .DS_Store
+
+# Desktop / PyInstaller (build locally or in CI)
+backend-ai/build/
+backend-ai/dist/
+desktop/node_modules/
+desktop/dist-electron/
+desktop/.tmp-*
+desktop/*.log
+

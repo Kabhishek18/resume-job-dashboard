@@ -1,0 +1,114 @@
+name: Desktop artifacts
+
+# PyInstaller + torch/spaCy is heavy (~10–30+ minutes); run on demand or release tags only.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend-ai/requirements.txt
+            backend-ai/requirements-jobspy.txt
+            backend-ai/requirements-desktop-build.txt
+
+      - name: Backend dependencies and PyInstaller bundle
+        working-directory: backend-ai
+        run: |
+          pip install -r requirements.txt
+          pip install --no-deps -r requirements-jobspy.txt
+          pip install -r requirements-desktop-build.txt
+          rm -rf dist build
+          python -m PyInstaller --noconfirm --distpath dist --workpath build job-resume-api.spec
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend static export
+        working-directory: frontend
+        run: |
+          npm ci
+          STATIC_EXPORT=true NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000 npm run build
+
+      - name: Electron package (macOS)
+        working-directory: desktop
+        run: |
+          npm ci
+          npx electron-builder --mac --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: |
+            desktop/dist-electron/**/*.dmg
+            desktop/dist-electron/**/*.zip
+          if-no-files-found: warn
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend-ai/requirements.txt
+            backend-ai/requirements-jobspy.txt
+            backend-ai/requirements-desktop-build.txt
+
+      - name: Backend dependencies and PyInstaller bundle
+        working-directory: backend-ai
+        shell: bash
+        run: |
+          pip install -r requirements.txt
+          pip install --no-deps -r requirements-jobspy.txt
+          pip install -r requirements-desktop-build.txt
+          rm -rf dist build
+          python -m PyInstaller --noconfirm --distpath dist --workpath build job-resume-api.spec
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend static export
+        working-directory: frontend
+        run: |
+          npm ci
+          $env:STATIC_EXPORT="true"
+          $env:NEXT_PUBLIC_API_BASE="http://127.0.0.1:8000"
+          npm run build
+
+      - name: Electron package (Windows)
+        working-directory: desktop
+        run: |
+          npm ci
+          npx electron-builder --win --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: |
+            desktop/dist-electron/**/*.exe
+          if-no-files-found: warn

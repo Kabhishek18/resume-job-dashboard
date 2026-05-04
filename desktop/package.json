@@ -1,0 +1,64 @@
+{
+  "name": "job-resume-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell: local FastAPI + static Next export (DMG / Windows installer).",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build:frontend": "cd ../frontend && STATIC_EXPORT=true NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000 npm run build",
+    "build:backend": "cd ../backend-ai && rm -rf dist build && pyinstaller --noconfirm --distpath dist --workpath build job-resume-api.spec",
+    "predist": "npm run build:frontend && npm run build:backend",
+    "pack": "npm run predist && electron-builder --dir",
+    "dist": "npm run predist && electron-builder",
+    "dist:mac": "npm run predist && electron-builder --mac",
+    "dist:win": "npm run predist && electron-builder --win"
+  },
+  "dependencies": {
+    "serve-handler": "^6.1.6"
+  },
+  "devDependencies": {
+    "electron": "^35.1.2",
+    "electron-builder": "^26.6.10"
+  },
+  "build": {
+    "appId": "com.jobresume.desktop",
+    "productName": "Resume Job Dashboard",
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asar": true,
+    "extraResources": [
+      {
+        "from": "../frontend/out",
+        "to": "frontend-out",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../backend-ai/dist/job-resume-api",
+        "to": "backend/job-resume-api",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"],
+      "hardenedRuntime": false,
+      "identity": null
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

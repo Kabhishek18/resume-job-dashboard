@@ -109,6 +109,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("ENABLE_JOB_SCHEDULER"),
     )
 
+    # Electron desktop shell: permit http loopback UI origins with CORS (see app.main allow_origin_regex).
+    job_resume_desktop: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("JOB_RESUME_DESKTOP"),
+        description="Desktop app bundles API + UI; browser Origin is http://127.0.0.1:<uiPort>.",
+    )
+
     # JobSpy (Indeed/Glassdoor country string, e.g. india, usa — see JobSpy Country.from_string)
     jobspy_country_indeed: str = "india"
     jobspy_results_wanted: int = 30
